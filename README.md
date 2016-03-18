@@ -41,4 +41,4 @@ Examples:
   run -i input.txt -o output.txt -e error.txt a.exe
 ```
 
-[Orange eJudje system](orange.spbgut.ru)
+[Orange eJudje system](http://orange.spbgut.ru)
