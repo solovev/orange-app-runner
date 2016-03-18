@@ -38,7 +38,7 @@ Exteneded options:
                      required for some old compilers as Borland Delphi
 Examples:
   run -t 10s -m 32M a.exe
-  run -i input.txt -o output.txt -e error.txt a.exe
+  run -i input.txt -o output.txt -e error.txt <progname>
 ```
 
 [Orange eJudje system](http://orange.spbgut.ru)
