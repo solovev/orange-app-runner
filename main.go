@@ -1,10 +1,11 @@
 package main
 
 import (
-	"fmt"
+	"io/ioutil"
 	"log"
-	"oar/system"
-	"oar/util"
+	"orange-app-runner/system"
+	"orange-app-runner/util"
+	"os"
 	"os/exec"
 	"runtime"
 )
@@ -19,28 +20,53 @@ func main() {
 
 	cfg = util.NewConfig()
 
-	/*
-	*	Adding "./" before process path, if its not a system command
-	 */
-	if cfg.ProcessPath == cfg.BaseName {
-		_, err := exec.LookPath(cfg.ProcessPath)
-		if err != nil {
-			cfg.ProcessPath = fmt.Sprintf("%s%s", "./", cfg.ProcessPath)
-			util.Debug("Prefix \"./\" was added to %s", cfg.BaseName)
-		}
+	if cfg.Quiet {
+		log.SetOutput(ioutil.Discard)
+	}
+
+	if cfg.DisplayWindow {
+		restartItself("gnome-terminal")
 	}
 
 	var err error
 	exitCode := 0
-	if len(cfg.User) == 0 || cfg.User == system.GetCurrentUserName() || system.IsCurrentUserRoot() {
+
+	defaultRunning := cfg.User == system.GetCurrentUserName() || system.IsCurrentUserRoot()
+	if defaultRunning {
 		exitCode, err = runProcess()
+	} else {
+		exitCode, err = runProcessViaPTY()
 	}
+
 	if err != nil {
 		log.Printf("Process killed. Cause: %v\n", err)
 	}
 
-	util.Debug("Exit code of \"%s\": %d", cfg.ProcessPath, exitCode)
-	if cfg.ExitCode {
-		system.Exit(exitCode)
+	if exitCode != -1 {
+		if defaultRunning {
+			util.Debug("Exit code of \"%s\": %d", cfg.ProcessPath, exitCode)
+		}
+		if cfg.ExitCode {
+			system.Exit(exitCode)
+		}
+	}
+}
+
+func restartItself(from string) {
+	if from == "gnome-terminal" {
+		terminalArgs := []string{"-x"}
+		for _, arg := range os.Args {
+			if arg != "-w" {
+				terminalArgs = append(terminalArgs, arg)
+			}
+		}
+		cmd := exec.Command(from, terminalArgs...)
+		err := cmd.Run()
+		if err != nil {
+			log.Printf("Unable to open new \"%s\" terminal: %v\n", from, err)
+			system.Exit(1)
+		}
+		log.Println("Redirected to new terminal.")
+		system.Exit(0)
 	}
 }

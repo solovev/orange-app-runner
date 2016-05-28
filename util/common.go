@@ -1,6 +1,7 @@
 package util
 
 import (
+	"crypto/sha1"
 	"fmt"
 	"log"
 	"os"
@@ -14,7 +15,7 @@ func GetProcessBaseName(path string) string {
 }
 
 func Debug(msg string, a ...interface{}) {
-	if debug_enabled && !quiet {
+	if debug && !quiet {
 		log.Println("[DEBUG]", fmt.Sprintf(msg, a...))
 	}
 }
@@ -44,4 +45,11 @@ func OpenFile(dir, name string) (*os.File, error) {
 		}
 	}
 	return f, nil
+}
+
+func GetHash(value string) string {
+	hex := sha1.New()
+	hex.Write([]byte(os.Args[0]))
+	hex.Write([]byte(value))
+	return fmt.Sprintf("%x", hex.Sum(nil))
 }

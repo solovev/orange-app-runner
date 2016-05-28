@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"oar/system"
-	"oar/util"
+	"orange-app-runner/system"
+	"orange-app-runner/util"
 	"os"
 	"os/exec"
 	"sync"
@@ -17,29 +17,13 @@ import (
 func runProcess() (int, error) {
 	util.Debug("Starting process: %s %v", cfg.ProcessPath, cfg.ProcessArgs)
 
-	var cmd *exec.Cmd
-	if cfg.DisplayWindow && cfg.Terminal == "gnome-terminal" {
-		terminalArgs := []string{"-x"}
-		for _, arg := range os.Args {
-			if arg != "-w" {
-				terminalArgs = append(terminalArgs, arg)
-			}
-		}
-		cmd = exec.Command(cfg.Terminal, terminalArgs...)
-		err := cmd.Run()
-		if err != nil {
-			return -1, err
-		}
-		log.Println("Redirected to new terminal.")
-		system.Exit(0)
-	}
-	cmd = exec.Command(cfg.ProcessPath, cfg.ProcessArgs...)
+	cmd := exec.Command(cfg.ProcessPath, cfg.ProcessArgs...)
 	cmd.Env = cfg.Environment
 	cmd.SysProcAttr = &syscall.SysProcAttr{}
 	cmd.SysProcAttr.Ptrace = true
 	cmd.SysProcAttr.Pdeathsig = syscall.SIGKILL
 
-	if len(cfg.User) > 0 && cfg.User != system.GetCurrentUserName() && system.IsCurrentUserRoot() {
+	if cfg.User != system.GetCurrentUserName() {
 		uid, gid, err := system.FindUser(cfg.User)
 		if err != nil {
 			return -1, err

@@ -3,15 +3,18 @@ package util
 import (
 	"errors"
 	"flag"
+	"fmt"
+	"orange-app-runner/system"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 )
 
 var (
-	debug_enabled = false
-	quiet         = false
+	debug = false
+	quiet = false
 )
 
 type Config struct {
@@ -38,9 +41,6 @@ type Config struct {
 	AllowCreateProcesses   bool
 	MultiThreadedProcess   bool
 	TerminateOnFCException bool
-
-	// Settings
-	Terminal string // gnome-terminal / xterm / konsole
 }
 
 type duration time.Duration
@@ -151,7 +151,7 @@ func (e *env) String() string {
 
 func (e *env) Set(value string) error {
 	if value == "~DEBUG" {
-		debug_enabled = true
+		debug = true
 		return nil
 	}
 	if strings.Count(value, "=") != 1 {
@@ -180,15 +180,13 @@ func NewConfig() *Config {
 	cfg.RequiredLoad.Set("0.05")
 	cfg.Environment = os.Environ()
 
-	cfg.Terminal = "gnome-terminal"
-
 	flag.Var(&cfg.TimeLimit, "t", "Time limit, terminate after <value> seconds,\n\tyou can add 'ms', 'm', 'h' (w/o quotes) after the number to specify.")
 	flag.Var(&cfg.MemoryLimit, "m", "Memory limit, terminate if working set of the process\n\texceeds <value> bytes, you can add 'K' or 'M' to specify\n\tmemory limit in kilo- or megabytes.")
 	flag.Var(&cfg.RequiredLoad, "r", "Required load of the processor for this process\n\tnot to be considered idle. You can add '%' sign to specify\n\trequired load in percent, default is 0.05 = 5%.")
 	flag.Var(&cfg.IdleLimit, "y", "Idleness limit, terminate process if it did not load processor\n\tfor at least <-r option> for duration of <value>.")
 
 	flag.StringVar(&cfg.HomeDirectory, "d", "", "Make <string> home directory for process.")
-	flag.StringVar(&cfg.User, "l", "", "Create process under <string> user.")
+	flag.StringVar(&cfg.User, "l", system.GetCurrentUserName(), "Create process under <string> user.")
 	flag.StringVar(&cfg.Password, "p", "", "Logins user using <string> password.")
 
 	flag.StringVar(&cfg.InputFile, "i", "", "Redirects standart input stream to the <string> file.")
@@ -224,11 +222,22 @@ func NewConfig() *Config {
 
 	cfg.BaseName = GetProcessBaseName(cfg.ProcessPath)
 
+	/*
+	*	Adding "./" before process path, if its not a system command
+	 */
+	if cfg.ProcessPath == cfg.BaseName {
+		_, err := exec.LookPath(cfg.ProcessPath)
+		if err != nil {
+			cfg.ProcessPath = fmt.Sprintf("%s%s", "./", cfg.ProcessPath)
+			Debug("Prefix \"./\" was added to %s", cfg.BaseName)
+		}
+	}
+
 	if cfg.Quiet {
 		cfg.DisplayWindow = false
 	}
 
-	// debug_enabled = true // TODO'0
+	// debug = true // TODO'0
 	quiet = cfg.Quiet
 
 	return cfg
