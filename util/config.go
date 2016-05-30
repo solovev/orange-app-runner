@@ -207,6 +207,11 @@ func NewConfig() *Config {
 
 	flag.Parse()
 
+	if cfg.Quiet {
+		cfg.DisplayWindow = false
+	}
+	quiet = cfg.Quiet
+
 	idleLimit := cfg.IdleLimit.Seconds()
 	if idleLimit != 0 && idleLimit < 1 {
 		cfg.IdleLimit.Set("1s")
@@ -220,10 +225,15 @@ func NewConfig() *Config {
 		cfg.ProcessArgs = args[1:]
 	}
 
+	if len(cfg.ProcessPath) == 0 {
+		fmt.Println("Error: Process location isn't specified.")
+		system.Exit(1)
+	}
+
 	cfg.BaseName = GetProcessBaseName(cfg.ProcessPath)
 
 	/*
-	*	Adding "./" before process path, if its not a system command
+	* Adding "./" before process path, if its not a system command
 	 */
 	if cfg.ProcessPath == cfg.BaseName {
 		_, err := exec.LookPath(cfg.ProcessPath)
@@ -232,13 +242,6 @@ func NewConfig() *Config {
 			Debug("Prefix \"./\" was added to %s", cfg.BaseName)
 		}
 	}
-
-	if cfg.Quiet {
-		cfg.DisplayWindow = false
-	}
-
-	// debug = true // TODO'0
-	quiet = cfg.Quiet
 
 	return cfg
 }
