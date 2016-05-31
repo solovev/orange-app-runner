@@ -343,7 +343,7 @@ func measureUsage(storage *os.File, process *os.Process) {
 					checkError(process, err)
 				}
 
-				// Проверка на привышение указанных лимитов (если параметры были указаны)
+				// Проверка на превышение указанных лимитов (если параметры были указаны)
 				if idleLimit > 0 && idle >= idleLimit {
 					checkError(process, fmt.Errorf("Idle time limit [%d] exceeded", cfg.IdleLimit.Seconds()))
 				}
