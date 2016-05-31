@@ -18,11 +18,16 @@ func runProcess() (int, error) {
 	util.Debug("Starting process: %s %v", cfg.ProcessPath, cfg.ProcessArgs)
 
 	cmd := exec.Command(cfg.ProcessPath, cfg.ProcessArgs...)
+	// Передаем в параметры переменные среды
 	cmd.Env = cfg.Environment
 	cmd.SysProcAttr = &syscall.SysProcAttr{}
+	// Атрибутом "ptrace" сообщаем системе, что будем отслеживать действия процесса.
 	cmd.SysProcAttr.Ptrace = true
+	// "Убиваем" всех потомков процесса при его смерти.
 	cmd.SysProcAttr.Pdeathsig = syscall.SIGKILL
 
+	// Если текущий пользователь имеет привелегии администратора, то эмулируем запуск
+	// под другим пользователем, указанным в параметре "-l"
 	if cfg.User != system.GetCurrentUserName() {
 		uid, gid, err := system.FindUser(cfg.User)
 		if err != nil {
@@ -33,19 +38,24 @@ func runProcess() (int, error) {
 	}
 
 	wg := &sync.WaitGroup{}
+	wg.Add(2)
+
+	var f *os.File
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return -1, err
 	}
-	wg.Add(2)
+	// Если параметр "-o" был указан, то перенаправляем stdout запущенного процесса в файл
+	// И, если не указан параметр "-q", еще в нашу консоль.
 	if len(cfg.OutputFile) > 0 {
-		f, err := util.CreateFile(cfg.HomeDirectory, cfg.OutputFile)
+		f, err = util.CreateFile(cfg.HomeDirectory, cfg.OutputFile)
 		if err != nil {
 			return -1, fmt.Errorf("Unable to create \"%s\": %v", cfg.OutputFile, err)
 		}
 		defer f.Close()
 		go fromPipe(stdout, f, wg)
 	} else {
+		// Параметр "-o" не был указан, перенаправляем stdout только в консоль.
 		go fromPipe(stdout, nil, wg)
 	}
 
@@ -53,37 +63,45 @@ func runProcess() (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	// Если параметр "-e" был указан, то перенаправляем stderr запущенного процесса в файл
+	// И, если не указан параметр "-q", еще в нашу консоль.
 	if len(cfg.ErrorFile) > 0 {
-		f, err := util.CreateFile(cfg.HomeDirectory, cfg.ErrorFile)
+		f, err = util.CreateFile(cfg.HomeDirectory, cfg.ErrorFile)
 		if err != nil {
 			return -1, fmt.Errorf("Unable to create \"%s\": %v", cfg.ErrorFile, err)
 		}
 		defer f.Close()
 		go fromPipe(stderr, f, wg)
 	} else {
+		// Параметр "-e" не был указан, перенаправляем stderr только в консоль.
 		go fromPipe(stderr, nil, wg)
 	}
 
+	// Если указан параметр "-i", то stdin'ом процесса является указанный файл.
 	if len(cfg.InputFile) > 0 {
-		f, err := util.OpenFile(cfg.HomeDirectory, cfg.InputFile)
+		f, err = util.OpenFile(cfg.HomeDirectory, cfg.InputFile)
 		if err != nil {
 			return -1, fmt.Errorf("Unable to open \"%s\": %v", cfg.InputFile, err)
 		}
 		defer f.Close()
 		cmd.Stdin = f
 	} else {
+		// Если не указан параметр "-i", stdin'ом процесса является консоль
 		cmd.Stdin = os.Stdin
 	}
 
+	// Запускаем процесс
 	err = cmd.Start()
 	if err != nil {
 		return -1, err
 	}
+	// Убеждаемся, что после выхода из функции (runProcess) запущенный процесс завершится.
 	defer cmd.Process.Kill()
 
 	pid := cmd.Process.Pid
 	util.Debug("Process id: %d", pid)
 
+	// Если указан параметр "-1", процесс будет выполнятся только на 1ом ядре процессора.
 	if cfg.SingleCore {
 		err := system.SetCPUAffinity(pid)
 		if err != nil {
@@ -91,6 +109,7 @@ func runProcess() (int, error) {
 		}
 	}
 
+	// Если указан параметр "-s", создаем файл сбора статистики.
 	var storeFile *os.File
 	if len(cfg.StoreFile) > 0 {
 		storeFile, err = util.OpenFile(cfg.HomeDirectory, cfg.StoreFile)
@@ -99,7 +118,11 @@ func runProcess() (int, error) {
 		}
 		defer storeFile.Close()
 	}
+
+	// Начинаем отслеживать потребление памяти и цпу процесса в отдельном потоке.
 	go measureUsage(storeFile, cmd.Process)
+
+	// В отдельном потоке начинаем отслеживать время жизни процесса, если указан "-t".
 	go func() {
 		timeLimit := cfg.TimeLimit.Value()
 		if timeLimit > 0 {
@@ -109,42 +132,64 @@ func runProcess() (int, error) {
 			}
 		}
 	}()
-	// - - - - - - - - - - - - - - - - - - - - - -
+
+	// Т.к. атрибует "ptrace" включен, то после запуска, начинаем ждать пока
+	// процесс изменит свой статус (остановится, завершится, подаст сигнал и т.д.)
 	var ws syscall.WaitStatus
-	/*
-	* There we need catch RUsage (first mem, cpu usage)
-	* and start reading stat file in another goroutine
-	 */
 	waitPid, err := syscall.Wait4(-1, &ws, syscall.WALL, nil)
 	if err != nil {
 		return -1, fmt.Errorf("Error [syscall.Wait4] for \"%s\": %v", cfg.BaseName, err)
 	}
-	if waitPid != pid { // Or... is it normal? I don't think so
+	if waitPid != pid {
 		return -1, fmt.Errorf("Error [syscall.Wait4]: First waited PID (%d) not equal to \"%s\" PID (%d)", waitPid, cfg.BaseName, pid)
 	}
 
+	// Ptrace-параметры
 	options := syscall.PTRACE_O_TRACEFORK
 	options |= syscall.PTRACE_O_TRACEVFORK
 	options |= syscall.PTRACE_O_TRACECLONE
 	options |= syscall.PTRACE_O_TRACEEXIT
 	parentPid := 0
+
+	// Начинаем рекурсивно отслеживать поведение запущенного процесса и его потомков.
+	// Пример. Если запущенный процесс (указанный в параметре "oar") создал потомка_1, то
+	// начинаем отслеживать этого потомка_1, потомок_1 тоже может создать потомка (потомка_2),
+	// в новой итерации начинаем отслеживать этого нового потомка (потомка_2).
+	// Если потомок_2 больше не создает новых потомков, то следущая итерация цикла
+	// будет принадлежать его родителю (потомку_1), если потомок_1 также не создает потомков,
+	// переходим к главному процессу (запущенному через "oar").
+	// Первая (и последняя) итерация будет отслеживать наш запущенный процесс, остальные - потомков.
+	// 	Creation 0 | Main Process			   Exit	5 | - - - - - Main Process
+	// 	         1 | - Child_1				 		4 | - - - Child_1
+	// 	         2 | - - - Child_2					3 | Child_2
 	for {
+		// После того как процесс-потомок остановился (после syscall.Wait4)
+		// Передаем ему ptrace-параметры, которые заставят его останавливаться
+		// В тех случаях, когда он начинает создавать дочерний процесс.
 		syscall.PtraceSetOptions(waitPid, options)
 		syscall.PtraceCont(waitPid, 0)
 
 		parentPid = waitPid
 
+		// Опять ждем пока процесс-потомок изменит свой статус, теперь это может быть
+		// не только остановка, завершение, сигналирование, но и создание дочернего процесса.
 		waitPid, err = syscall.Wait4(-1, &ws, syscall.WALL, nil)
 		if err != nil {
 			return -1, fmt.Errorf("Error [syscall.Wait4] for [PID: %d, PPID %d]: %v", waitPid, parentPid, err)
 		}
 		command := system.GetProcessCommand(waitPid)
 		util.Debug("Waited PID: %d, PPID: %d, CMD: %s", waitPid, parentPid, command)
+
+		// Проверяем, завершился ли процесс-потомок
 		if ws.Exited() {
 			util.Debug(" - Process [PID: %d] finished", waitPid)
+			// Если завершенный процесс-потомок является нашим запущенным процессом
+			// (процессом, указанным в параметре "oar"), то ломаем цикл for,
+			// И выходим из функции (runProcess) с кодом выхода ws.ExitStatus()
 			if waitPid == pid {
-				break /* Break ptrace loop if first process (cfg.BaseName) finished. */
+				break
 			}
+			// Если нет, переходим к его родителю.
 			continue
 		}
 
@@ -155,9 +200,16 @@ func runProcess() (int, error) {
 
 		sigtrap := uint32(syscall.SIGTRAP)
 		sigsegv := uint32(syscall.SIGSEGV)
+		// Если причина изменения статуса является создание дочернего процесса:
+		// Если параметер "-Xacp" не установлен, то после попытки создать дочерний процесс
+		// функция (runProcess) завершится, сработает defer cmd.Process.Kill()
+		// (процесс будет убит), а т.к. в атрибутах запуска процесса стоит
+		// Pdeathsig: syscall.SIGKILL, то будут убиты все созданные потомки.
 		if !cfg.AllowCreateProcesses {
 			switch uint32(ws) >> 8 {
 			case sigtrap | (syscall.PTRACE_EVENT_CLONE << 8):
+				// Для создания отдельного потока, процесс создает потомка,
+				// параметр "-Xamt" разрешает многопоточность.
 				if !cfg.MultiThreadedProcess {
 					return -1, fmt.Errorf("Process attempt to clone himself")
 				}
@@ -175,16 +227,10 @@ func runProcess() (int, error) {
 			case sigtrap | (syscall.PTRACE_EVENT_EXEC << 8):
 				return -1, fmt.Errorf("Attempt to create new process")
 			case sigsegv:
-				/*
-				* Here, we need to kill broken process, like:
-				* 	err = syscall.Kill(waitPid, 9)
-				* But if we just return from this function
-				* defer of cmd.Process.Kill was triggered
-				* and all child processes must be killed by Deathsig ?
-				 */
 				return -1, fmt.Errorf("Segmentation fault! [PID %d, PPID %d]", waitPid, parentPid)
 			}
-		} else { // If spawning new process is allowed... just for debug
+			// Если параметер "-Xacp" установлен, то просто выводим инфу о созданных потомках
+		} else {
 			switch uint32(ws) >> 8 {
 			case sigtrap | (syscall.PTRACE_EVENT_EXIT << 8):
 				util.Debug(" - Detected exit event.")
@@ -230,21 +276,31 @@ func runProcess() (int, error) {
 			}
 		}
 	}
-	// - - - - - - - - - - - - - - - - - - - - - -
+	// Ждем, пока функции перенаправления stdout и stderr в файл/консоль,
+	// запущенные в отдельных потоках,закончат свою работу
 	wg.Wait()
 
 	return ws.ExitStatus(), nil
 }
 
 func measureUsage(storage *os.File, process *os.Process) {
+	// Проверяем, не завершился ли процесс до того, как мы начнем считать потребление ресурсов.
 	if _, err := os.Stat(fmt.Sprintf("/proc/%d/stat", process.Pid)); err == nil {
-		processTimeB, _, err := system.GetProcessStats(process.Pid)
+		// Потребление CPU в % считается по такой формуле:
+		// consumtion = (cores * (ptA - ptB) * 100) / (ttA - ttB)
+		// Где	cores	- Количество используемых ядер процессор
+		//		ptA		- Потребляемое время cpu процессом в момент времени А
+		//		ptB		- Потребляемое время cpu процессом в момент времени B
+		//		ttA		- Нагруженность процессора (общее время) в момент A
+		//		ttB		- Нагруженность процессора (общее время) в момент B
+		// Замер А позже замера B (A > B)
+		ptB, _, err := system.GetProcessStats(process.Pid)
 		checkError(process, err)
-		cpuTimeB, err := system.GetTotalCPUTime()
+		ttB, err := system.GetTotalCPUTime()
 		checkError(process, err)
 
 		cores := 1
-
+		// Если параметр "-1" не указан, используем все ядра процессора для замера.
 		if !cfg.SingleCore {
 			cores, err = system.GetCPUCount()
 			checkError(process, err)
@@ -254,18 +310,22 @@ func measureUsage(storage *os.File, process *os.Process) {
 		idle := 0
 		idleLimit := cfg.IdleLimit.Seconds()
 
+		// Проводим замер каждую секунду? работы программы
 		ticker := time.NewTicker(time.Second)
 		for {
 			select {
 			case <-ticker.C:
-				cpuTimeA, err := system.GetTotalCPUTime()
+				ttA, err := system.GetTotalCPUTime()
 				checkError(process, err)
 
-				processTimeA, processMemory, err := system.GetProcessStats(process.Pid)
+				ptA, processMemory, err := system.GetProcessStats(process.Pid)
 				checkError(process, err)
 
-				load := float64(uint64(cores)*(processTimeA-processTimeB)) / float64(cpuTimeA-cpuTimeB)
+				// Расчитываем потребление CPU
+				load := float64(uint64(cores)*(ptA-ptB)) / float64(ttA-ttB)
 				if idleLimit > 0 {
+					// Если потребление CPU меньше чем допустимая нагрузка
+					// увеличиваем счетчик простоя (idle)
 					if cfg.RequiredLoad.Value() > load {
 						idle++
 					} else {
@@ -276,12 +336,14 @@ func measureUsage(storage *os.File, process *os.Process) {
 				stringLoad := util.StringifyLoad(load)
 				util.Debug(" - [Memory: %s/%s, Load: %s/%s]", stringMemory, cfg.MemoryLimit.String(), stringLoad, cfg.RequiredLoad.String())
 
+				// Записываем полученные данные о потреблении ресурсов в файл, указанный в "-s".
 				if storage != nil {
 					storage.WriteString(fmt.Sprintf("%s,%f,%d\n", time.Now().Format("15:04:05"), load, processMemory))
 					err = storage.Sync()
 					checkError(process, err)
 				}
 
+				// Проверка на привышение указанных лимитов (если параметры были указаны)
 				if idleLimit > 0 && idle >= idleLimit {
 					checkError(process, fmt.Errorf("Idle time limit [%d] exceeded", cfg.IdleLimit.Seconds()))
 				}
@@ -289,8 +351,8 @@ func measureUsage(storage *os.File, process *os.Process) {
 				if memoryLimit > 0 && processMemory > memoryLimit {
 					checkError(process, fmt.Errorf("Memory limit [%s] exceeded", cfg.MemoryLimit.String()))
 				}
-				processTimeB = processTimeA
-				cpuTimeB = cpuTimeA
+				ptB = ptA
+				ttB = ttA
 			}
 		}
 	}

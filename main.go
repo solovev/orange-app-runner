@@ -12,34 +12,48 @@ import (
 	"runtime"
 )
 
+// Параметр cfg виден во всем пакете main (exec.go, execpty.go, main.go)
 var (
 	cfg *util.Config
 )
 
 func main() {
+	// Говорим "oar" использовать текущий поток выполнения ОС только под основную горутину.
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
 	cfg = util.NewConfig()
 
+	// Если указан параметр "-q", то перенаправляем вывод консольных логов в никуда.
 	if cfg.Quiet {
 		log.SetOutput(ioutil.Discard)
 	}
 
+	// Если указан параметр "-w" то перезапускаем введенную команду
+	// (./oar [<options>] <program> [<parameters>]) в новом терминале без параметра "-w".
+	// Пример:
+	//	Оригинальная команда: "./oar -w -x -1 ./command"
+	//	Перезапуск в новом терминале "./oar -x -1 ./command"
 	if cfg.DisplayWindow {
 		restartItself("gnome-terminal")
 	}
 
+	// Если указан параметр "-d", то убеждаемся что такая директория существует.
+	// В противном случае создаем ее.
 	if len(cfg.HomeDirectory) > 0 {
 		path := cfg.HomeDirectory
+		// Определяем, является ли указанный путь в "-d" абсолютным или относительным.
+		// Если путь не начинается с ~ и /, то он относительный.
 		if path[0] != '~' && path[0] != '/' {
 			dir, err := os.Getwd()
 			if err != nil {
 				fmt.Printf("Unable to get working directory: %v.\n", err)
 				system.Exit(1)
 			}
+			// Если путь относительный, конкатенируем его с текущий директорией.
 			path = filepath.Join(dir, cfg.HomeDirectory)
 		}
+		// Создаем директорию по указанному пути.
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			err := os.MkdirAll(path, 0777)
 			if err != nil {
@@ -55,6 +69,19 @@ func main() {
 	var err error
 	exitCode := 0
 
+	// а) Если указанное имя пользователя в параметре "-l" совпадает с текущим
+	// 	пользователем (под которым мы запустили "oar"), или текущий пользователь
+	// 	имеет привилегии администратора, то сразу переходим в функцию runProcess.
+	// б) Если текущий пользователь не обладает привилегиями администратора, то
+	// 	необходимо перед этим залогиниться, использовов имя пользователя (-l) и пароль (-p),
+	// 	сделать это можно при помощи системной команды "/bin/su <user> -c <command>".
+	// 	Перезапускаем введенную команду (./oar [<options>] <program> [<parameters>])
+	// 	через "/bin/su <user> -c <command>" в псевдотерминале без параметров "-l" и "-p",
+	// 	т.к. системную команду "/bin/su" запустить через exec не представляется возможным,
+	//  выполнить ее можно только в консоли или псевдотерминале (ф-ия runProcessViaPTY).
+	//	Пример:
+	//		Введенная команда: ./oar -t 10s -l test -p qwerty ./command
+	//		Пойдет в псевдотерминал: /bin/su test -c "./oar -t 10s ./command"
 	defaultRunning := cfg.User == system.GetCurrentUserName() || system.IsCurrentUserRoot()
 	if defaultRunning {
 		exitCode, err = runProcess()
@@ -70,6 +97,7 @@ func main() {
 		if defaultRunning {
 			util.Debug("Exit code of \"%s\": %d", cfg.ProcessPath, exitCode)
 		}
+		// Если указан параметр "-x", то "oar" вернет код выхода отслеживаемого процесса.
 		if cfg.ExitCode {
 			system.Exit(exitCode)
 		}

@@ -17,6 +17,7 @@ var (
 	quiet = false
 )
 
+// Config содержит информацию о введенных параметрах.
 type Config struct {
 	TimeLimit     duration
 	MemoryLimit   memory
@@ -175,6 +176,7 @@ func (e *env) Set(value string) error {
 	return nil
 }
 
+// NewConfig Создает новый экземляр структуры "Config"
 func NewConfig() *Config {
 	cfg := new(Config)
 	cfg.RequiredLoad.Set("0.05")

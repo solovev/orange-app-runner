@@ -15,6 +15,7 @@ import (
 	"unsafe"
 )
 
+// SetCPUAffinity заставляет процесс <pid> использовать только самое разгруженное ядро.
 func SetCPUAffinity(pid int) error {
 	cpuIndex, err := getReliableCPU()
 	if err != nil {
@@ -33,6 +34,7 @@ func SetCPUAffinity(pid int) error {
 	return nil
 }
 
+// getReliableCPU возвращает номер (id) самого разгруженного ядра процессора.
 func getReliableCPU() (uint, error) {
 	data, err := ioutil.ReadFile("/proc/stat")
 	if err != nil {
@@ -74,6 +76,7 @@ func getReliableCPU() (uint, error) {
 	return uint(result), nil
 }
 
+// GetTotalCPUTime возращает общее количество времени занятости процессора в данный момент.
 func GetTotalCPUTime() (uint64, error) {
 	data, err := ioutil.ReadFile("/proc/stat")
 	if err != nil {
@@ -95,6 +98,7 @@ func GetTotalCPUTime() (uint64, error) {
 	return user + nice + system + idle, nil
 }
 
+// GetProcessStats возвращает количество времени занимаемое процессом <pid> в CPU и занимаемую им виртуальную память.
 func GetProcessStats(pid int) (uint64, uint64, error) {
 	path := fmt.Sprintf("/proc/%d/stat", pid)
 	data, err := ioutil.ReadFile(path)
@@ -118,6 +122,7 @@ func GetProcessStats(pid int) (uint64, uint64, error) {
 	return stime + utime, vsize, nil
 }
 
+// GetProcessCommand возвращает комманду запуска указанного процесса.
 func GetProcessCommand(pid int) string {
 	path := "/proc/" + strconv.Itoa(pid) + "/cmdline"
 	cmdline, err := ioutil.ReadFile(path)
@@ -134,11 +139,13 @@ func GetProcessCommand(pid int) string {
 	return string(cmdline)
 }
 
+// Exit закрывает приложение с указанным кодом выхода и разблокировывает занятый системный поток.
 func Exit(code int) {
 	runtime.UnlockOSThread()
 	os.Exit(code)
 }
 
+// GetCPUCount возвращает общее количество ядер в системе.
 func GetCPUCount() (int, error) {
 	data, err := ioutil.ReadFile("/proc/stat")
 	if err != nil {
