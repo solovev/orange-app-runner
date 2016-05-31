@@ -40,7 +40,6 @@ func runProcess() (int, error) {
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
 
-	var f *os.File
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return -1, err
@@ -48,12 +47,13 @@ func runProcess() (int, error) {
 	// Если параметр "-o" был указан, то перенаправляем stdout запущенного процесса в файл
 	// И, если не указан параметр "-q", еще в нашу консоль.
 	if len(cfg.OutputFile) > 0 {
-		f, err = util.CreateFile(cfg.HomeDirectory, cfg.OutputFile)
+		var outputFile *os.File
+		outputFile, err = util.CreateFile(cfg.HomeDirectory, cfg.OutputFile)
 		if err != nil {
 			return -1, fmt.Errorf("Unable to create \"%s\": %v", cfg.OutputFile, err)
 		}
-		defer f.Close()
-		go fromPipe(stdout, f, wg)
+		defer outputFile.Close()
+		go fromPipe(stdout, outputFile, wg)
 	} else {
 		// Параметр "-o" не был указан, перенаправляем stdout только в консоль.
 		go fromPipe(stdout, nil, wg)
@@ -66,12 +66,13 @@ func runProcess() (int, error) {
 	// Если параметр "-e" был указан, то перенаправляем stderr запущенного процесса в файл
 	// И, если не указан параметр "-q", еще в нашу консоль.
 	if len(cfg.ErrorFile) > 0 {
-		f, err = util.CreateFile(cfg.HomeDirectory, cfg.ErrorFile)
+		var errorFile *os.File
+		errorFile, err = util.CreateFile(cfg.HomeDirectory, cfg.ErrorFile)
 		if err != nil {
 			return -1, fmt.Errorf("Unable to create \"%s\": %v", cfg.ErrorFile, err)
 		}
-		defer f.Close()
-		go fromPipe(stderr, f, wg)
+		defer errorFile.Close()
+		go fromPipe(stderr, errorFile, wg)
 	} else {
 		// Параметр "-e" не был указан, перенаправляем stderr только в консоль.
 		go fromPipe(stderr, nil, wg)
@@ -79,12 +80,13 @@ func runProcess() (int, error) {
 
 	// Если указан параметр "-i", то stdin'ом процесса является указанный файл.
 	if len(cfg.InputFile) > 0 {
-		f, err = util.OpenFile(cfg.HomeDirectory, cfg.InputFile)
+		var inputFile *os.File
+		inputFile, err = util.OpenFile(cfg.HomeDirectory, cfg.InputFile)
 		if err != nil {
 			return -1, fmt.Errorf("Unable to open \"%s\": %v", cfg.InputFile, err)
 		}
-		defer f.Close()
-		cmd.Stdin = f
+		defer inputFile.Close()
+		cmd.Stdin = inputFile
 	} else {
 		// Если не указан параметр "-i", stdin'ом процесса является консоль
 		cmd.Stdin = os.Stdin
@@ -119,19 +121,19 @@ func runProcess() (int, error) {
 		defer storeFile.Close()
 	}
 
-	// Начинаем отслеживать потребление памяти и цпу процесса в отдельном потоке.
+	// Начинаем отслеживать потребление ресурсов в отдельном потоке.
 	go measureUsage(storeFile, cmd.Process)
 
 	// В отдельном потоке начинаем отслеживать время жизни процесса, если указан "-t".
-	go func() {
-		timeLimit := cfg.TimeLimit.Value()
-		if timeLimit > 0 {
+	timeLimit := cfg.TimeLimit.Value()
+	if timeLimit > 0 {
+		go func() {
 			select {
-			case <-time.After(cfg.TimeLimit.Value()):
+			case <-time.After(timeLimit):
 				checkError(cmd.Process, fmt.Errorf("Time limit [%s] exceeded", cfg.TimeLimit.String()))
 			}
-		}
-	}()
+		}()
+	}
 
 	// Т.к. атрибут "ptrace" включен, то, после запуска, начинаем ждать пока
 	// процесс изменит свой статус (остановится, завершится, подаст сигнал и т.д.)
