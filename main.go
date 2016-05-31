@@ -12,7 +12,7 @@ import (
 	"runtime"
 )
 
-// Параметр cfg виден во всем пакете main (exec.go, execpty.go, main.go)
+// Переменная cfg видна во всем пакете main (exec.go, execpty.go, main.go)
 var (
 	cfg *util.Config
 )
