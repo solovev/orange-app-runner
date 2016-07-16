@@ -8,3 +8,5 @@
 !*/
 
 *.yml
+.idea/
+CMakeLists.txt
