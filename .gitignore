@@ -7,6 +7,5 @@
 # Unignore all dirs
 !*/
 
-*.yml
 .idea/
 CMakeLists.txt
