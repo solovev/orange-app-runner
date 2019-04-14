@@ -1,17 +1,18 @@
-package main
+package runner
 
 import (
 	"bufio"
 	"fmt"
-	"orange-app-runner/system"
-	"orange-app-runner/util"
 	"os"
 	"os/exec"
 	"sync"
 	"syscall"
+
+	"github.com/solovev/orange-app-runner/system"
+	"github.com/solovev/orange-app-runner/util"
 )
 
-func runProcessViaPTY() (int, error) {
+func RunProcessViaPTY(cfg *util.Config) (int, error) {
 	util.Debug("Moving to pseudoterminal...")
 	stringCommand := ""
 
@@ -52,7 +53,7 @@ func runProcessViaPTY() (int, error) {
 	util.Debug("Stop key for scanner: %s", stopKey)
 
 	// Сразу (почти) после запуска "/bin/su" попросит ввести пароль, вводим его.
-	enterPassword(pty)
+	enterPassword(cfg.Password, pty)
 
 	// Т.к. псевдотерминал представляет из себя одновременно и приемник и передатчик
 	// (stdin, stdout в 1 флаконе), то когда мы введем что-либо в него, сканер псевдотерминала
@@ -131,7 +132,7 @@ func runProcessViaPTY() (int, error) {
 	return exit, err
 }
 
-func enterPassword(pty *os.File) {
+func enterPassword(password string, pty *os.File) {
 	scanner := bufio.NewScanner(pty)
 	scanner.Split(bufio.ScanRunes)
 	// Ждем запроса пароля от "/bin/su ..."
@@ -139,7 +140,7 @@ func enterPassword(pty *os.File) {
 		break
 	}
 	// Вводим пароль
-	write(cfg.Password, pty)
+	write(password, pty)
 }
 
 func write(value string, pty *os.File) {

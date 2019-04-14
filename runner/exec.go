@@ -1,21 +1,27 @@
-package main
+package runner
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"log"
-	"orange-app-runner/system"
-	"orange-app-runner/util"
 	"os"
 	"os/exec"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/solovev/orange-app-runner/system"
+	"github.com/solovev/orange-app-runner/util"
 )
 
-func runProcess() (int, error) {
+func RunProcess(cfg *util.Config) (int, error) {
 	util.Debug("Starting process: %s %v", cfg.ProcessPath, cfg.ProcessArgs)
+
+	if len(cfg.ProcessPath) == 0 {
+		return -1, errors.New("ProcessPath isn't specified")
+	}
 
 	cmd := exec.Command(cfg.ProcessPath, cfg.ProcessArgs...)
 	// Передаем в параметры переменные среды
@@ -53,10 +59,10 @@ func runProcess() (int, error) {
 			return -1, fmt.Errorf("Unable to create \"%s\": %v", cfg.OutputFile, err)
 		}
 		defer outputFile.Close()
-		go fromPipe(stdout, outputFile, wg)
+		go fromPipe(cfg, stdout, outputFile, wg)
 	} else {
 		// Параметр "-o" не был указан, перенаправляем stdout только в консоль.
-		go fromPipe(stdout, nil, wg)
+		go fromPipe(cfg, stdout, nil, wg)
 	}
 
 	stderr, err := cmd.StderrPipe()
@@ -72,10 +78,10 @@ func runProcess() (int, error) {
 			return -1, fmt.Errorf("Unable to create \"%s\": %v", cfg.ErrorFile, err)
 		}
 		defer errorFile.Close()
-		go fromPipe(stderr, errorFile, wg)
+		go fromPipe(cfg, stderr, errorFile, wg)
 	} else {
 		// Параметр "-e" не был указан, перенаправляем stderr только в консоль.
-		go fromPipe(stderr, nil, wg)
+		go fromPipe(cfg, stderr, nil, wg)
 	}
 
 	// Если указан параметр "-i", то stdin'ом процесса является указанный файл.
@@ -122,7 +128,7 @@ func runProcess() (int, error) {
 	}
 
 	// Начинаем отслеживать потребление ресурсов в отдельном потоке.
-	go measureUsage(storeFile, cmd.Process)
+	go measureUsage(cfg, storeFile, cmd.Process)
 
 	// В отдельном потоке начинаем отслеживать время жизни процесса, если указан "-t".
 	timeLimit := cfg.TimeLimit.Value()
@@ -285,7 +291,7 @@ func runProcess() (int, error) {
 	return ws.ExitStatus(), nil
 }
 
-func measureUsage(storage *os.File, process *os.Process) {
+func measureUsage(cfg *util.Config, storage *os.File, process *os.Process) {
 	// Проверяем, не завершился ли процесс до того, как мы начнем считать потребление ресурсов.
 	if _, err := os.Stat(fmt.Sprintf("/proc/%d/stat", process.Pid)); err == nil {
 		// Потребление CPU в % считается по такой формуле:
@@ -370,7 +376,7 @@ func checkError(process *os.Process, err error) {
 	}
 }
 
-func fromPipe(r io.Reader, f *os.File, wg *sync.WaitGroup) {
+func fromPipe(cfg *util.Config, r io.Reader, f *os.File, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	scanner := bufio.NewScanner(r)

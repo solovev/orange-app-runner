@@ -5,10 +5,62 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/solovev/orange-app-runner/system"
 )
+
+// CreateHomeDirectory создает директорию по указанному пути, если ее не существует
+func CreateHomeDirectory(path string) (string, error) {
+	length := len(path)
+	if length == 0 || (path[0] != '~' && path[0] != '/') {
+		dir, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+
+		// Если путь не указан, выбираем текущую директорию в качестве "домашней"
+		// Если путь относительный, конкатенируем его с текущий директорией.
+		if length == 0 {
+			path = dir
+		} else {
+			path = filepath.Join(dir, path)
+		}
+	}
+	// Создаем директорию по указанному пути.
+	err := os.MkdirAll(path, 0777)
+	if err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// RestartItself перезапускает OAR
+// (./oar [<options>] <program> [<parameters>]) в новом терминале без параметра "-w".
+// Пример:
+//	Оригинальная команда: "./oar -w -x -1 ./command"
+//	Перезапуск в новом терминале "./oar -x -1 ./command"
+func RestartItself(from string) {
+	if from == "gnome-terminal" {
+		terminalArgs := []string{"-x"}
+		for _, arg := range os.Args {
+			if arg != "-w" {
+				terminalArgs = append(terminalArgs, arg)
+			}
+		}
+		cmd := exec.Command(from, terminalArgs...)
+		err := cmd.Run()
+		if err != nil {
+			log.Printf("Unable to open new \"%s\" terminal: %v\n", from, err)
+			system.Exit(1)
+		}
+		log.Println("Redirected to new terminal.")
+	}
+	system.Exit(0)
+}
 
 // GetProcessBaseName возвращает только имя процесса, указанное в полном пути <path>.
 // Пример:

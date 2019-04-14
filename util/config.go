@@ -4,12 +4,15 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"orange-app-runner/system"
+	"io/ioutil"
+	"log"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/solovev/orange-app-runner/system"
 )
 
 var (
@@ -211,6 +214,7 @@ func NewConfig() *Config {
 
 	if cfg.Quiet {
 		cfg.DisplayWindow = false
+		log.SetOutput(ioutil.Discard)
 	}
 	quiet = cfg.Quiet
 
@@ -227,12 +231,11 @@ func NewConfig() *Config {
 		cfg.ProcessArgs = args[1:]
 	}
 
-	if len(cfg.ProcessPath) == 0 {
-		fmt.Println("Error: Process location isn't specified.")
-		system.Exit(1)
-	}
-
 	cfg.BaseName = GetProcessBaseName(cfg.ProcessPath)
+
+	if len(cfg.HomeDirectory) == 0 {
+		cfg.HomeDirectory = cfg.BaseName
+	}
 
 	/*
 	* Adding "./" before process path, if its not a system command

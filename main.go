@@ -1,20 +1,12 @@
 package main
 
 import (
-	"fmt"
-	"io/ioutil"
 	"log"
-	"orange-app-runner/system"
-	"orange-app-runner/util"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"runtime"
-)
 
-// Переменная cfg видна во всем пакете main (exec.go, execpty.go, main.go)
-var (
-	cfg *util.Config
+	"github.com/solovev/orange-app-runner/runner"
+	"github.com/solovev/orange-app-runner/system"
+	"github.com/solovev/orange-app-runner/util"
 )
 
 func main() {
@@ -22,53 +14,27 @@ func main() {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	cfg = util.NewConfig()
-
-	// Если указан параметр "-q", то перенаправляем вывод консольных логов в никуда.
-	if cfg.Quiet {
-		log.SetOutput(ioutil.Discard)
-	}
+	cfg := util.NewConfig()
 
 	// Если указан параметр "-w" то перезапускаем введенную команду
-	// (./oar [<options>] <program> [<parameters>]) в новом терминале без параметра "-w".
-	// Пример:
-	//	Оригинальная команда: "./oar -w -x -1 ./command"
-	//	Перезапуск в новом терминале "./oar -x -1 ./command"
 	if cfg.DisplayWindow {
-		restartItself("gnome-terminal")
+		util.RestartItself("gnome-terminal")
 	}
 
 	// Если указан параметр "-d", то убеждаемся что такая директория существует.
 	// В противном случае создаем ее.
-	if len(cfg.HomeDirectory) > 0 {
-		path := cfg.HomeDirectory
-		// Определяем, является ли указанный путь в "-d" абсолютным или относительным.
-		// Если путь не начинается с ~ и /, то он относительный.
-		if path[0] != '~' && path[0] != '/' {
-			dir, err := os.Getwd()
-			if err != nil {
-				fmt.Printf("Unable to get working directory: %v.\n", err)
-				system.Exit(1)
-			}
-			// Если путь относительный, конкатенируем его с текущий директорией.
-			path = filepath.Join(dir, cfg.HomeDirectory)
-		}
-		// Создаем директорию по указанному пути.
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			err := os.MkdirAll(path, 0777)
-			if err != nil {
-				fmt.Printf("Error creating home directory \"%s\": %v.\n", path, err)
-				system.Exit(1)
-			}
-			util.Debug("Home directory \"%s\" was just created", path)
-		} else {
-			util.Debug("Home directory \"%s\" is exists", path)
-		}
+	homeDir, err := util.CreateHomeDirectory(cfg.HomeDirectory)
+	if err != nil {
+		util.Debug("Unable to create home directory \"%s\": %v.", cfg.HomeDirectory, err)
+		system.Exit(1)
 	}
 
-	var err error
-	exitCode := 0
+	if cfg.HomeDirectory != homeDir {
+		cfg.HomeDirectory = homeDir
+		util.Debug("Home directory path changed to: \"%s\".", cfg.HomeDirectory)
+	}
 
+	exitCode := 0
 	// а) Если указанное имя пользователя в параметре "-l" совпадает с текущим
 	//	пользователем (под которым мы запустили "oar"), или текущий пользователь
 	//	имеет привилегии администратора, то сразу переходим в функцию runProcess.
@@ -84,9 +50,9 @@ func main() {
 	//		Пойдет в псевдотерминал: /bin/su test -c "./oar -t 10s ./command"
 	defaultRunning := cfg.User == system.GetCurrentUserName() || system.IsCurrentUserRoot()
 	if defaultRunning {
-		exitCode, err = runProcess()
+		exitCode, err = runner.RunProcess(cfg)
 	} else {
-		exitCode, err = runProcessViaPTY()
+		exitCode, err = runner.RunProcessViaPTY(cfg)
 	}
 
 	if err != nil {
@@ -102,23 +68,4 @@ func main() {
 			system.Exit(exitCode)
 		}
 	}
-}
-
-func restartItself(from string) {
-	if from == "gnome-terminal" {
-		terminalArgs := []string{"-x"}
-		for _, arg := range os.Args {
-			if arg != "-w" {
-				terminalArgs = append(terminalArgs, arg)
-			}
-		}
-		cmd := exec.Command(from, terminalArgs...)
-		err := cmd.Run()
-		if err != nil {
-			log.Printf("Unable to open new \"%s\" terminal: %v\n", from, err)
-			system.Exit(1)
-		}
-		log.Println("Redirected to new terminal.")
-	}
-	system.Exit(0)
 }
