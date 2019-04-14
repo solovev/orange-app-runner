@@ -21,8 +21,7 @@ func main() {
 		util.RestartItself("gnome-terminal")
 	}
 
-	// Если указан параметр "-d", то убеждаемся что такая директория существует.
-	// В противном случае создаем ее.
+	// Убеждаемся в существовании home директории для процесса
 	homeDir, err := util.CreateHomeDirectory(cfg.HomeDirectory)
 	if err != nil {
 		util.Debug("Unable to create home directory \"%s\": %v.", cfg.HomeDirectory, err)
