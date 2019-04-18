@@ -12,7 +12,8 @@ import (
 	"github.com/solovev/orange-app-runner/util"
 )
 
-func RunProcessViaPTY(cfg *util.Config) (int, error) {
+// RunProcessViaPTY перезапускает команду в псевотерминале
+func RunProcessViaPTY(user string, password string) (int, error) {
 	util.Debug("Moving to pseudoterminal...")
 	stringCommand := ""
 
@@ -28,7 +29,7 @@ func RunProcessViaPTY(cfg *util.Config) (int, error) {
 	}
 
 	// Запускаем системную команду "/bin/su", через которую перезапускаем "oar".
-	cmd := exec.Command("/bin/su", cfg.User, "-c", stringCommand)
+	cmd := exec.Command("/bin/su", user, "-c", stringCommand)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		// "Убиваем" всех потомков при смерти родителя.
 		Pdeathsig: syscall.SIGKILL,
@@ -53,7 +54,7 @@ func RunProcessViaPTY(cfg *util.Config) (int, error) {
 	util.Debug("Stop key for scanner: %s", stopKey)
 
 	// Сразу (почти) после запуска "/bin/su" попросит ввести пароль, вводим его.
-	enterPassword(cfg.Password, pty)
+	enterPassword(password, pty)
 
 	// Т.к. псевдотерминал представляет из себя одновременно и приемник и передатчик
 	// (stdin, stdout в 1 флаконе), то когда мы введем что-либо в него, сканер псевдотерминала
@@ -85,7 +86,7 @@ func RunProcessViaPTY(cfg *util.Config) (int, error) {
 					return
 				}
 				// Выводим сообщение из псевдотерминала в обычную консоль
-				if len(text) > 0 && !cfg.Quiet {
+				if len(text) > 0 {
 					fmt.Println(text)
 				}
 			}

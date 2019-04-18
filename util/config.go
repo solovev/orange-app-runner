@@ -234,7 +234,7 @@ func NewConfig() *Config {
 	cfg.BaseName = GetProcessBaseName(cfg.ProcessPath)
 
 	if len(cfg.HomeDirectory) == 0 {
-		cfg.HomeDirectory = cfg.BaseName
+		cfg.HomeDirectory = cfg.ProcessPath + "_oar_reports"
 	}
 
 	/*

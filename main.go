@@ -21,18 +21,7 @@ func main() {
 		util.RestartItself("gnome-terminal")
 	}
 
-	// Убеждаемся в существовании home директории для процесса
-	homeDir, err := util.CreateHomeDirectory(cfg.HomeDirectory)
-	if err != nil {
-		util.Debug("Unable to create home directory \"%s\": %v.", cfg.HomeDirectory, err)
-		system.Exit(1)
-	}
-
-	if cfg.HomeDirectory != homeDir {
-		cfg.HomeDirectory = homeDir
-		util.Debug("Home directory path changed to: \"%s\".", cfg.HomeDirectory)
-	}
-
+	var err error
 	exitCode := 0
 	// а) Если указанное имя пользователя в параметре "-l" совпадает с текущим
 	//	пользователем (под которым мы запустили "oar"), или текущий пользователь
@@ -49,9 +38,21 @@ func main() {
 	//		Пойдет в псевдотерминал: /bin/su test -c "./oar -t 10s ./command"
 	defaultRunning := cfg.User == system.GetCurrentUserName() || system.IsCurrentUserRoot()
 	if defaultRunning {
+		// Убеждаемся в существовании home директории для процесса
+		homeDir, err := util.CreateHomeDirectory(cfg.HomeDirectory)
+		if err != nil {
+			util.Debug("Unable to create home directory \"%s\": %v.", cfg.HomeDirectory, err)
+			system.Exit(1)
+		}
+
+		if cfg.HomeDirectory != homeDir {
+			cfg.HomeDirectory = homeDir
+			util.Debug("Home directory path changed to: \"%s\".", homeDir)
+		}
+
 		exitCode, err = runner.RunProcess(cfg)
 	} else {
-		exitCode, err = runner.RunProcessViaPTY(cfg)
+		exitCode, err = runner.RunProcessViaPTY(cfg.User, cfg.Password)
 	}
 
 	if err != nil {
