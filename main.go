@@ -38,18 +38,6 @@ func main() {
 	//		Пойдет в псевдотерминал: /bin/su test -c "./oar -t 10s ./command"
 	defaultRunning := cfg.User == system.GetCurrentUserName() || system.IsCurrentUserRoot()
 	if defaultRunning {
-		// Убеждаемся в существовании home директории для процесса
-		homeDir, err := util.CreateHomeDirectory(cfg.HomeDirectory)
-		if err != nil {
-			util.Debug("Unable to create home directory \"%s\": %v.", cfg.HomeDirectory, err)
-			system.Exit(1)
-		}
-
-		if cfg.HomeDirectory != homeDir {
-			cfg.HomeDirectory = homeDir
-			util.Debug("Home directory path changed to: \"%s\".", homeDir)
-		}
-
 		exitCode, err = runner.RunProcess(cfg)
 	} else {
 		exitCode, err = runner.RunProcessViaPTY(cfg.User, cfg.Password)

@@ -26,6 +26,13 @@ func RunProcess(cfg *util.Config) (int, error) {
 	cmd := exec.Command(cfg.ProcessPath, cfg.ProcessArgs...)
 	// Передаем в параметры переменные среды
 	cmd.Env = cfg.Environment
+
+	homeDir, err := util.GetProcessHomeDirectory(cfg.HomeDirectory)
+	if err != nil {
+		return -1, fmt.Errorf("Unable to create home directory \"%s\": %v", cfg.HomeDirectory, err)
+	}
+	cmd.Dir = homeDir
+
 	cmd.SysProcAttr = &syscall.SysProcAttr{}
 	// Атрибутом "ptrace" сообщаем системе, что будем отслеживать действия процесса.
 	cmd.SysProcAttr.Ptrace = true
@@ -54,7 +61,7 @@ func RunProcess(cfg *util.Config) (int, error) {
 	// И, если не указан параметр "-q", еще в нашу консоль.
 	if len(cfg.OutputFile) > 0 {
 		var outputFile *os.File
-		outputFile, err = util.CreateFile(cfg.HomeDirectory, cfg.OutputFile)
+		outputFile, err = util.CreateFile(cfg.OutputFile)
 		if err != nil {
 			return -1, fmt.Errorf("Unable to create \"%s\": %v", cfg.OutputFile, err)
 		}
@@ -73,7 +80,7 @@ func RunProcess(cfg *util.Config) (int, error) {
 	// И, если не указан параметр "-q", еще в нашу консоль.
 	if len(cfg.ErrorFile) > 0 {
 		var errorFile *os.File
-		errorFile, err = util.CreateFile(cfg.HomeDirectory, cfg.ErrorFile)
+		errorFile, err = util.CreateFile(cfg.ErrorFile)
 		if err != nil {
 			return -1, fmt.Errorf("Unable to create \"%s\": %v", cfg.ErrorFile, err)
 		}
@@ -87,7 +94,7 @@ func RunProcess(cfg *util.Config) (int, error) {
 	// Если указан параметр "-i", то stdin'ом процесса является указанный файл.
 	if len(cfg.InputFile) > 0 {
 		var inputFile *os.File
-		inputFile, err = util.OpenFile(cfg.HomeDirectory, cfg.InputFile)
+		inputFile, err = util.OpenFile(cfg.InputFile)
 		if err != nil {
 			return -1, fmt.Errorf("Unable to open \"%s\": %v", cfg.InputFile, err)
 		}
@@ -120,7 +127,7 @@ func RunProcess(cfg *util.Config) (int, error) {
 	// Если указан параметр "-s", создаем файл сбора статистики.
 	var storeFile *os.File
 	if len(cfg.StoreFile) > 0 {
-		storeFile, err = util.OpenFile(cfg.HomeDirectory, cfg.StoreFile)
+		storeFile, err = util.OpenFile(cfg.StoreFile)
 		if err != nil {
 			return -1, fmt.Errorf("Unable to open storage file: %v", err)
 		}
