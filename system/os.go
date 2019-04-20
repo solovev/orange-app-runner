@@ -179,6 +179,18 @@ func GetProcessCommand(pid int) string {
 	return string(cmdline)
 }
 
+func KillGroup(pid int) (int, error) {
+	pgid, err := syscall.Getpgid(pid)
+
+	if err != nil {
+		return -1, err
+	}
+	if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
+		return pgid, err
+	}
+	return pgid, nil
+}
+
 // Exit закрывает приложение с указанным кодом выхода и разблокировывает занятый системный поток.
 func Exit(code int) {
 	runtime.UnlockOSThread()
