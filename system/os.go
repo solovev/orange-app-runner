@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 // SetCPUAffinity заставляет процесс <pid> использовать только самое разгруженное ядро.
@@ -32,6 +34,44 @@ func SetCPUAffinity(pid int) error {
 		return err
 	}
 	return nil
+}
+
+func SetAffinity(set []int, pid int) ([]int, error) {
+	if len(set) == 0 {
+		return set, nil
+	}
+
+	if len(set) == 1 && set[0] == -1 {
+		index, err := getReliableCPU()
+		if err != nil {
+			index = 0
+		}
+		set[0] = int(index)
+	}
+
+	var filteredSet []int
+	num := runtime.NumCPU()
+	for _, index := range set {
+		if index < 0 || index >= num {
+			continue
+		}
+		filteredSet = append(filteredSet, index)
+	}
+
+	if len(filteredSet) == 0 {
+		return filteredSet, errors.New("Unable to set affinity: no valid cpu ids specified")
+	}
+
+	cpuset := unix.CPUSet{}
+	for _, index := range filteredSet {
+		cpuset.Set(index)
+	}
+
+	err := unix.SchedSetaffinity(0, &cpuset)
+	if err != nil {
+		return filteredSet, err
+	}
+	return filteredSet, nil
 }
 
 // getReliableCPU возвращает номер (id) самого разгруженного ядра процессора.
@@ -145,8 +185,15 @@ func Exit(code int) {
 	os.Exit(code)
 }
 
-// GetCPUCount возвращает общее количество ядер в системе.
-func GetCPUCount() (int, error) {
+// GetCPUCount возвращает количество используемых процессом ядер,
+// в случае ошибки вернет общее количество ядер в системе.
+func GetCPUCount(pid int) (int, error) {
+	var cpuset unix.CPUSet
+	err := unix.SchedSetaffinity(pid, &cpuset)
+	if err == nil {
+		return cpuset.Count(), nil
+	}
+
 	data, err := ioutil.ReadFile("/proc/stat")
 	if err != nil {
 		return 0, err

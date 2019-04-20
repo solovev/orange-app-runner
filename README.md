@@ -26,7 +26,9 @@ Where options are:
   -x               - return exit code of the application
   -q               - do not display any information on the screen
   -w               - display program window on the screen
-  -1               - use single CPU/CPU core
+  -a               - list of CPUs available to the process (divided by comma).
+                     If not specified, child process will be use all available cores.
+                     Specify \"-1\" to use single most unload CPU core
   -s <file>        - store statistics in then <file>
   -D var=value     - sets value of the environment variable, current environment
                      is completely ignored in this case

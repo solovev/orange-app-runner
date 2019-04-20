@@ -117,11 +117,12 @@ func RunProcess(cfg *util.Config) (int, error) {
 	util.Debug("Process id: %d", pid)
 
 	// Если указан параметр "-1", процесс будет выполнятся только на 1ом ядре процессора.
-	if cfg.SingleCore {
-		err := system.SetCPUAffinity(pid)
+	if len(cfg.Affinity) > 0 {
+		set, err := system.SetAffinity(cfg.Affinity, pid)
 		if err != nil {
-			return -1, fmt.Errorf("Unable to set cpu affinity: %v", err)
+			return 0, err
 		}
+		util.Debug("Processor affinity was set to: %v", set)
 	}
 
 	// Если указан параметр "-s", создаем файл сбора статистики.
@@ -314,12 +315,9 @@ func measureUsage(cfg *util.Config, storage *os.File, process *os.Process) {
 		ttB, err := system.GetTotalCPUTime()
 		checkError(process, err)
 
-		cores := 1
-		// Если параметр "-1" не указан, используем все ядра процессора для замера.
-		if !cfg.SingleCore {
-			cores, err = system.GetCPUCount()
-			checkError(process, err)
-		}
+		cores, err := system.GetCPUCount(process.Pid)
+		checkError(process, err)
+
 		util.Debug("Process using %d cpu cores.", cores)
 
 		idle := 0

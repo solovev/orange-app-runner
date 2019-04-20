@@ -26,14 +26,15 @@ type Config struct {
 	MemoryLimit   memory
 	RequiredLoad  rload
 	IdleLimit     duration
-	HomeDirectory string
 	User          string
 	Password      string
 	ExitCode      bool
 	Quiet         bool
 	DisplayWindow bool
-	SingleCore    bool
 	Environment   env
+
+	HomeDirectory string
+	Affinity      []int
 
 	InputFile, OutputFile, ErrorFile, StoreFile string
 
@@ -158,6 +159,12 @@ func (e *env) Set(value string) error {
 		debug = true
 		return nil
 	}
+
+	if value == "~OS" {
+		*e = append([]string{}, os.Environ()...)
+		return nil
+	}
+
 	if strings.Count(value, "=") != 1 {
 		return errors.New("Wrong syntax of '-D' option. Type '-h' for show help message.")
 	}
@@ -180,10 +187,10 @@ func (e *env) Set(value string) error {
 }
 
 // NewConfig Создает новый экземляр структуры "Config"
-func NewConfig() *Config {
+func NewConfig() (*Config, error) {
 	cfg := new(Config)
 	cfg.RequiredLoad.Set("0.05")
-	cfg.Environment = os.Environ()
+	cfg.Environment = []string{}
 
 	flag.Var(&cfg.TimeLimit, "t", "Time limit, terminate after <value> seconds,\n\tyou can add 'ms', 'm', 'h' (w/o quotes) after the number to specify.")
 	flag.Var(&cfg.MemoryLimit, "m", "Memory limit, terminate if working set of the process\n\texceeds <value> bytes, you can add 'K' or 'M' to specify\n\tmemory limit in kilo- or megabytes.")
@@ -201,7 +208,9 @@ func NewConfig() *Config {
 	flag.BoolVar(&cfg.ExitCode, "x", false, "Return exit code of the application.")
 	flag.BoolVar(&cfg.Quiet, "q", false, "Do not display any information on the screen.")
 	flag.BoolVar(&cfg.DisplayWindow, "w", false, "Display program window on the screen.")
-	flag.BoolVar(&cfg.SingleCore, "1", false, "Use single CPU/CPU core.")
+
+	var affinityString string
+	flag.StringVar(&affinityString, "a", "", "List of CPUs available to the process (divided by comma). \n\tIf not specified, child process will be use all available cores. \n\tSpecify \"-1\" to use single most unload CPU core.")
 
 	flag.StringVar(&cfg.StoreFile, "s", "", "Store statistics in <string> file.")
 	flag.Var(&cfg.Environment, "D", "Sets value of the environment variable,\n\tcurrent environment is completely ignored in this case.")
@@ -211,6 +220,22 @@ func NewConfig() *Config {
 	flag.BoolVar(&cfg.TerminateOnFCException, "Xtfce", false, "Do not ignore exceptions if they are marked as first-chance,\n\trequired for some old compilers as Borland Delphi.")
 
 	flag.Parse()
+
+	if len(affinityString) > 0 {
+		if affinityString == "-1" {
+			cfg.Affinity = []int{-1}
+		} else {
+			list := strings.Split(affinityString, ",")
+			for _, item := range list {
+				i, err := strconv.ParseInt(item, 10, 64)
+				if err != nil {
+					return nil, err
+				}
+				index := int(i)
+				cfg.Affinity = append(cfg.Affinity, index)
+			}
+		}
+	}
 
 	if cfg.Quiet {
 		cfg.DisplayWindow = false
@@ -244,5 +269,5 @@ func NewConfig() *Config {
 		}
 	}
 
-	return cfg
+	return cfg, nil
 }

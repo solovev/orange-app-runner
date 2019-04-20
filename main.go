@@ -14,7 +14,10 @@ func main() {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	cfg := util.NewConfig()
+	cfg, err := util.NewConfig()
+	if err != nil {
+		log.Printf("Error while parsing configuration: %v\n", err)
+	}
 
 	// Если указан параметр "-w" то перезапускаем введенную команду
 	if cfg.DisplayWindow {
