@@ -16,6 +16,7 @@ import (
 	"github.com/solovev/orange-app-runner/util"
 )
 
+// RunProcess запускает основной процесс отслеживания
 func RunProcess(cfg *util.Config) (int, error) {
 	util.Debug("Starting process: %s %v", cfg.ProcessPath, cfg.ProcessArgs)
 
@@ -377,7 +378,7 @@ func checkError(process *os.Process, err error) {
 		if process != nil {
 			process.Kill() // Catch the error?
 		}
-		system.Exit(0)
+		os.Exit(0)
 	}
 }
 

@@ -7,7 +7,7 @@
 # Unignore all dirs
 !*/
 
-*.yml
 .subjects/*
 .vscode/*
 *.out
+*.yml
