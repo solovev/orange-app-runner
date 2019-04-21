@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -189,12 +188,6 @@ func KillGroup(pid int) (int, error) {
 		return pgid, err
 	}
 	return pgid, nil
-}
-
-// Exit закрывает приложение с указанным кодом выхода и разблокировывает занятый системный поток.
-func Exit(code int) {
-	runtime.UnlockOSThread()
-	os.Exit(code)
 }
 
 // GetCPUCount возвращает количество используемых процессом ядер,

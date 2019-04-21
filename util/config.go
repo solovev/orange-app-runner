@@ -31,8 +31,8 @@ type Config struct {
 	ExitCode      bool
 	Quiet         bool
 	DisplayWindow bool
+	Containerize  bool
 	Environment   env
-
 	HomeDirectory string
 	Affinity      []int
 
@@ -208,6 +208,7 @@ func NewConfig() (*Config, error) {
 	flag.BoolVar(&cfg.ExitCode, "x", false, "Return exit code of the application.")
 	flag.BoolVar(&cfg.Quiet, "q", false, "Do not display any information on the screen.")
 	flag.BoolVar(&cfg.DisplayWindow, "w", false, "Display program window on the screen.")
+	flag.BoolVar(&cfg.Containerize, "c", false, "Isolate spawned process.")
 
 	var affinityString string
 	flag.StringVar(&affinityString, "a", "", "List of CPUs available to the process (divided by comma). \n\tIf not specified, child process will be use all available cores. \n\tSpecify \"-1\" to use single most unload CPU core.")

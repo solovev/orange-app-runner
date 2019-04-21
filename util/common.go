@@ -8,8 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/solovev/orange-app-runner/system"
 )
 
 // ы проверяет, есть ли директория по указанному пути, если ее не существует - создает
@@ -32,28 +30,36 @@ func GetProcessHomeDirectory(path string) (string, error) {
 	return path, nil
 }
 
+func ExcludeFlag(flag string) []string {
+	args := []string{}
+	for _, arg := range os.Args {
+		if arg != "-"+flag {
+			args = append(args, arg)
+		}
+	}
+	return args
+}
+
 // RestartItself перезапускает OAR
 // (./oar [<options>] <program> [<parameters>]) в новом терминале без параметра "-w".
 // Пример:
 //	Оригинальная команда: "./oar -w -x -1 ./command"
 //	Перезапуск в новом терминале "./oar -x -1 ./command"
-func RestartItself(from string) {
+func RestartItself(from string) error {
 	if from == "gnome-terminal" {
 		terminalArgs := []string{"-x"}
-		for _, arg := range os.Args {
-			if arg != "-w" {
-				terminalArgs = append(terminalArgs, arg)
-			}
-		}
+
+		args := ExcludeFlag("w")
+		terminalArgs = append(terminalArgs, args...)
+
 		cmd := exec.Command(from, terminalArgs...)
 		err := cmd.Run()
 		if err != nil {
-			log.Printf("Unable to open new \"%s\" terminal: %v\n", from, err)
-			system.Exit(1)
+			return err
 		}
 		log.Println("Redirected to new terminal.")
 	}
-	system.Exit(0)
+	return nil
 }
 
 // GetProcessBaseName возвращает только имя процесса, указанное в полном пути <path>.
