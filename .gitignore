@@ -8,5 +8,6 @@
 !*/
 
 *.yml
-_tests/*
+.subjects/*
+.vscode/*
 *.out
