@@ -2,6 +2,7 @@ package util
 
 import (
 	"crypto/sha1"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -70,6 +71,14 @@ func GetProcessBaseName(path string) string {
 	return filepath.Base(strings.Replace(path, "\\", "/", -1))
 }
 
+// GetProcessDir возвращает путь к директории бинарного файла
+// Пример:
+//	path: "/home/folder/command.out"
+//	return:	"/home/folder"
+func GetProcessDir(path string) string {
+	return filepath.Dir(strings.Replace(path, "\\", "/", -1))
+}
+
 // Debug выводит на экран отладочную информацию.
 func Debug(msg string, a ...interface{}) {
 	if debug && !quiet {
@@ -84,6 +93,31 @@ func IsFileExists(path string) bool {
 		}
 	}
 	return true
+}
+
+func CheckIsBinaryExists(pathToBinary string) (string, error) {
+	if len(pathToBinary) == 0 {
+		return "", nil
+	}
+
+	path, err := exec.LookPath(pathToBinary)
+	if err != nil {
+		path, err = filepath.Abs(pathToBinary)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	fi, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+
+	if fi.Mode().IsDir() {
+		return "", errors.New("File is a directory")
+	}
+
+	return path, nil
 }
 
 // CreateFile пересоздает файл <name> в директории <dir>

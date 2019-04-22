@@ -48,4 +48,6 @@ Enable debug:
   ./oar -D ~DEBUG <progname>
 ```
 
+Heavily inspired by [ns-process](https://github.com/teddyking/ns-process)
+
 [Orange eJudje system](http://orange.spbgut.ru)
