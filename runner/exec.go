@@ -166,6 +166,7 @@ func RunProcess(cfg *util.Config) (int, error) {
 	options |= syscall.PTRACE_O_TRACEVFORK
 	options |= syscall.PTRACE_O_TRACECLONE
 	options |= syscall.PTRACE_O_TRACEEXIT
+	options |= syscall.PTRACE_O_TRACEEXEC
 	parentPid := 0
 
 	// Начинаем рекурсивно отслеживать поведение запущенного процесса и его потомков.

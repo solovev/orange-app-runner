@@ -1,11 +1,11 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"syscall"
 	"time"
@@ -13,25 +13,25 @@ import (
 	"github.com/docker/docker/pkg/reexec"
 	"github.com/jessevdk/go-flags"
 	log "github.com/sirupsen/logrus"
+	"github.com/solovev/orange-app-runner/instance"
 	"github.com/solovev/orange-app-runner/system"
 )
 
 var (
-	cfg config
+	cfg instance.Config
 
 	processPath string
-	processName string
 	processArgs []string
 )
 
 const (
 	defaultProcess        = "/bin/sh"
-	wrapper        string = "ejudge"
-	ps             string = "[OAR eJudge] \"%s\" $ "
+	wrapper        string = "ejudge_tracer"
 )
 
 func init() {
 	args, err := flags.Parse(&cfg)
+
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -45,7 +45,6 @@ func init() {
 		processPath = defaultProcess
 		log.Warnf("Path to target binary is not specified, changing to %s...\n", processPath)
 	}
-	processName = filepath.Base(processPath)
 
 	log.SetFormatter(&log.TextFormatter{})
 
@@ -53,13 +52,13 @@ func init() {
 		log.SetLevel(log.DebugLevel)
 	}
 
-	reexec.Register(wrapper, prepare)
+	reexec.Register(wrapper, startTracer)
 	if reexec.Init() {
 		os.Exit(0)
 	}
 }
 
-func prepare() {
+func startTracer() {
 	if len(cfg.RootFS) > 0 {
 		path, err := filepath.Abs(cfg.RootFS)
 		if err != nil {
@@ -99,29 +98,24 @@ func prepare() {
 		}
 	}
 
-	nsRun()
-}
+	exitCode, err := instance.Run(processPath, processArgs, &cfg)
+	if err != nil {
+		log.Fatalf("Error running tracee process: %v\n", err)
+	}
 
-func nsRun() {
-	log.Infof("Starting tracer for %s...\n", processName)
+	log.Infof("Tracee is terminated. Exit code: %d\n", exitCode)
 
-	cmd := exec.Command(processPath, processArgs...)
-
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	cmd.Env = []string{"PS1=" + fmt.Sprintf(ps, processName)}
-
-	if err := cmd.Run(); err != nil {
-		fmt.Printf("Error running the /bin/sh command - %s\n", err)
-		os.Exit(1)
+	if cfg.PropagateExitCode {
+		os.Exit(exitCode)
 	}
 }
 
 func main() {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	if len(cfg.RootFS) > 0 {
-		err := cfg.checkRootFS()
+		err := cfg.CheckRootFS()
 		if err != nil {
 			log.WithFields(log.Fields{
 				"path":  cfg.RootFS,
@@ -133,7 +127,7 @@ func main() {
 	}
 
 	if len(cfg.NetSetGoPath) > 0 {
-		err := cfg.checkNetSetGoPath()
+		err := cfg.CheckNetSetGoPath()
 		if err != nil {
 			log.WithFields(log.Fields{
 				"path":  cfg.NetSetGoPath,
@@ -154,7 +148,7 @@ func main() {
 	if err != nil {
 		log.Warn(err)
 	}
-	log.Infof("Starting container for %s (As: \"%s\", UID: %d, GID: %d): %v...\n", processName, u.Username, uid, gid, args)
+	log.Infof("Starting tracer for \"%s\" (As: \"%s\", UID: %d, GID: %d): %v...\n", processPath, u.Username, uid, gid, args)
 
 	cmd := reexec.Command(args...)
 	cmd.Stderr = os.Stderr
