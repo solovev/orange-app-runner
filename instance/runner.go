@@ -188,6 +188,15 @@ func trace(cmd *exec.Cmd, cfg *Config) (int, error) {
 		}
 
 		if ws.Stopped() {
+			switch ws.StopSignal() {
+			case syscall.SIGXCPU:
+				err = errors.New("CPU time limit exceeded")
+				return formatError("syscall.SIGXCPU", err)
+			case syscall.SIGSEGV:
+				err = errors.New("(?) Memory limit exceeded")
+				return formatError("syscall.SIGSEGV", err)
+			}
+
 			trap := ws.TrapCause()
 			if trap == syscall.PTRACE_EVENT_CLONE {
 				culprit := "Trap Cause: PTRACE_EVENT_CLONE"
@@ -239,13 +248,6 @@ func trace(cmd *exec.Cmd, cfg *Config) (int, error) {
 			return formatError("syscall.PtraceCont", err)
 		}
 	}
-
-	status := cmd.ProcessState.Sys().(syscall.WaitStatus)
-	debugStatus(traceePid, status)
-	debugStatus(currentPid, ws)
-
-	err = errors.New("Unexpected trace completion")
-	return formatError("stop tracer", err)
 }
 
 func processCommandName(pid int, traceeCommand *exec.Cmd) string {
