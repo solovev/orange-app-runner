@@ -193,7 +193,7 @@ func trace(cmd *exec.Cmd, cfg *Config) (int, error) {
 				err = errors.New("CPU time limit exceeded")
 				return formatError("syscall.SIGXCPU", err)
 			case syscall.SIGSEGV:
-				err = errors.New("(?) Memory limit exceeded")
+				err = errors.New("Segmentation fault (memory access violation)")
 				return formatError("syscall.SIGSEGV", err)
 			}
 
