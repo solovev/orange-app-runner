@@ -18,6 +18,7 @@ type Config struct {
 	WorkingDir        string   `short:"d" long:"dir" description:"Set path to working directory for process"`
 	PropagateExitCode bool     `short:"x" long:"exit" description:"Enable exit code propagation (return exit code from tracee application)"`
 
+	CPUTimeLimit  int64 `short:"c" long:"cput-limit" description:"Terminate tracee if its process has been scheduled in user and kernel mode more than specified time in milliseconds" optional:"yes" optional-value:"-1" default:"-1"`
 	RealTimeLimit int64 `short:"t" long:"rt-limit" description:"Terminate tracee after specified milliseconds" optional:"yes" optional-value:"-1" default:"-1"`
 	MemoryLimit   int64 `short:"m" long:"mem-limit" description:"Terminate tracee if the memory consumption exceeds the specified number of kilobytes" optional:"yes" optional-value:"-1" default:"-1"`
 

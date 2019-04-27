@@ -304,6 +304,12 @@ func trace(tracee *traceeInstance, cfg *Config) (int, error) {
 			}
 		}
 
+		cpuLim := cfg.CPUTimeLimit
+		if cpuLim >= 0 {
+			// percent := int(float64(size) / float64(memLim) * 100.0)
+			debugMessage("CPU time consumption: U %v S %v\n", usage.Utime, usage.Stime)
+		}
+
 		if waitPid <= 0 {
 			err := fmt.Errorf("Waited pid is %d", waitPid)
 			return formatError("syscall.Wait4 pid check", err)
