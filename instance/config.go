@@ -18,6 +18,9 @@ type Config struct {
 	WorkingDir        string   `short:"d" long:"dir" description:"Set path to working directory for process"`
 	PropagateExitCode bool     `short:"x" long:"exit" description:"Enable exit code propagation (return exit code from tracee application)"`
 
+	RealTimeLimit int64 `short:"t" long:"rt-limit" description:"Terminate tracee after specified milliseconds" optional:"yes" optional-value:"-1" default:"-1"`
+	MemoryLimit   int64 `short:"m" long:"mem-limit" description:"Terminate tracee if the memory consumption exceeds the specified number of kilobytes" optional:"yes" optional-value:"-1" default:"-1"`
+
 	AllowCreateProcesses bool `long:"allow-create-processes" description:"Allow to spawn child processes by tracee process"`
 	AllowMultiThreading  bool `long:"allow-multithreading" description:"Allow tracee process to clone himself for new thread creation"`
 	MaxPtraceIterations  int  `long:"max-ptrace-iterations" description:"Set limit of number of ptrace loop iterations (debug purposes)" optional:"yes" optional-value:"-1" default:"-1"`

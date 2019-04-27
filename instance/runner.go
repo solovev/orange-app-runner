@@ -3,6 +3,7 @@ package instance
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,17 +16,44 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func wait(pid int) (cpid int, status syscall.WaitStatus, err error) {
-	cpid, err = syscall.Wait4(pid, &status, syscall.WALL, nil)
-	if err != nil {
-		return 0, 0, err
+var (
+	ErrRealTimeLimitExceeded = defineTracerError(2, errors.New("Real time limit was exceeded"))
+	ErrMemoryLimitExceeded   = defineTracerError(3, errors.New("Memory (RSS) limit was exceeded"))
+)
+
+type traceeInstance struct {
+	process *os.Process
+	pgid    int
+
+	stopc chan bool
+	errc  chan error
+}
+
+func (t *traceeInstance) kill(reason *TracerError) {
+	if err := t.process.Kill(); err != nil {
+		log.Debugf("[Tracee.kill] Killing error: %v\n", err)
 	}
-	return cpid, status, nil
+
+	if err := syscall.Kill(-t.pgid, syscall.SIGKILL); err != nil {
+		log.Debugf("[Tracee.kill] Killing group error: %v\n", err)
+	}
+
+	select {
+	case t.errc <- reason:
+	default:
+		log.Debugf("[Tracee.kill] Reason was not sended to channel: %v\n", reason)
+	}
 }
 
 func Run(processPath string, processArgs []string, cfg *Config) (int, error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
+
+	tracee := &traceeInstance{
+		stopc: make(chan bool),
+		errc:  make(chan error, 1),
+	}
+	defer close(tracee.stopc)
 
 	processName := filepath.Base(processPath)
 	log.Infof("Starting tracee (%s %v)...\n", processName, processArgs)
@@ -35,14 +63,37 @@ func Run(processPath string, processArgs []string, cfg *Config) (int, error) {
 	ptrace := !cfg.AllowCreateProcesses || !cfg.AllowMultiThreading
 	log.Debugf("Ptrace - %t [Allow create processes - %t] [Allow multithreading - %t]", ptrace, cfg.AllowCreateProcesses, cfg.AllowMultiThreading)
 
+	inReader, inWriter, err := os.Pipe()
+	if err != nil {
+		return -1, err
+	}
+	defer inWriter.Close()
+
+	outReader, outWriter, err := os.Pipe()
+	if err != nil {
+		return -1, err
+	}
+	defer outWriter.Close()
+
+	errReader, errWriter, err := os.Pipe()
+	if err != nil {
+		return -1, err
+	}
+	defer errWriter.Close()
+
+	go io.Copy(inWriter, os.Stdin)
+	go io.Copy(os.Stdout, outReader)
+	go io.Copy(os.Stderr, errReader)
+
+	files := []*os.File{inReader, outWriter, errWriter}
+
 	process, err := os.StartProcess(processPath, processArgs, &os.ProcAttr{
-		Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
+		Files: files,
 		Dir:   cfg.WorkingDir,
-		Env: append([]string{
-			"PS1=" + fmt.Sprintf("[OAR eJudge] \"%s\" $ ", processName),
-		}, cfg.Env...),
+		Env:   append([]string{}, cfg.Env...),
 		Sys: &syscall.SysProcAttr{
 			Ptrace:    true,
+			Setpgid:   true,
 			Pdeathsig: syscall.SIGKILL,
 		},
 	})
@@ -50,28 +101,36 @@ func Run(processPath string, processArgs []string, cfg *Config) (int, error) {
 		return -1, err
 	}
 
-	// defer cmd.Process.Kill()
+	tracee.process = process
 
-	pid := process.Pid
-	if len(cfg.Affinity) > 0 {
-		set, err := system.SetAffinity(cfg.Affinity, pid)
-		if err != nil {
+	for _, fd := range files {
+		if err = fd.Close(); err != nil {
 			return -1, err
 		}
-		log.Debugf("Processor affinity was set to: %v\n", set)
 	}
+
+	pid := process.Pid
+	pgid, err := syscall.Getpgid(pid)
+	if err != nil {
+		return -1, err
+	}
+	tracee.pgid = pgid
+	log.Debugf("Tracee pgid is: %d\n", tracee.pgid)
+
+	if err = setAffinity(pid, cfg); err != nil {
+		return -1, err
+	}
+
+	if cfg.RealTimeLimit > 0 {
+		go startKillingTimer(tracee, cfg)
+	}
+
+	// go startCheckingCPUTime(tracee, cfg)
 
 	_, status, err := wait(pid)
 	if err != nil {
 		return -1, err
 	}
-
-	go func() {
-		time.Sleep(1 * time.Second)
-		// process.Release()
-		// time.Sleep(1 * time.Second)
-		process.Kill()
-	}()
 
 	switch {
 	case status.Exited():
@@ -89,10 +148,67 @@ func Run(processPath string, processArgs []string, cfg *Config) (int, error) {
 		return -1, err
 	}
 
-	return trace(process, cfg)
+	exitCode, tErr := trace(tracee, cfg)
+
+	select {
+	case tErr = <-tracee.errc:
+		log.Debugf("Tracee was terminated due to exceeding one of the established limits: \"%v\"\n", tErr)
+	default:
+	}
+
+	return exitCode, tErr
 }
 
-func trace(process *os.Process, cfg *Config) (int, error) {
+func startCheckingCPUTime(tracee *traceeInstance, cfg *Config) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	log.Debugln("Goroutine \"startCheckingCPUTime\" started")
+	defer log.Debugln("Goroutine \"startCheckingCPUTime\" terminated")
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	for {
+		select {
+		case <-tracee.stopc:
+			return
+		case <-ticker.C:
+			var usage syscall.Rusage
+			if err := syscall.Getrusage(syscall.RUSAGE_CHILDREN, &usage); err != nil {
+				tErr := createTracerError("syscall.Getrusage", err)
+				tracee.kill(tErr)
+				return
+			}
+			log.Debugf("> Rusage: [Utime: %d] [Stime: %d] [Maxrss: %d]\n", usage.Utime, usage.Stime, usage.Maxrss)
+			// usage.
+		}
+	}
+}
+
+func startKillingTimer(tracee *traceeInstance, cfg *Config) {
+	if cfg.RealTimeLimit < 0 {
+		return
+	}
+
+	log.Debugln("Goroutine \"startKillingTimer\" started")
+	defer log.Debugln("Goroutine \"startKillingTimer\" terminated")
+
+	value := time.Duration(cfg.RealTimeLimit)
+	log.Debugf("Tracee will be terminated after %dms\n", value)
+
+	for {
+		select {
+		case <-tracee.stopc:
+			return
+		case <-time.After(value * time.Millisecond):
+			tracee.kill(ErrRealTimeLimitExceeded)
+			return
+		}
+	}
+}
+
+func trace(tracee *traceeInstance, cfg *Config) (int, error) {
+	process := tracee.process
+
 	var ws syscall.WaitStatus
 
 	level := 0
@@ -146,7 +262,7 @@ func trace(process *os.Process, cfg *Config) (int, error) {
 
 		prefix := fmt.Sprintf("[Iteration: %d | Level: %d]", iterations, level)
 		msg = fmt.Sprintf(msg, a...)
-		log.Debugf(prefix + " " + msg + "\n")
+		log.Debugln(prefix + " " + msg)
 	}
 
 	err := syscall.PtraceSetOptions(currentPid, options)
@@ -154,7 +270,7 @@ func trace(process *os.Process, cfg *Config) (int, error) {
 		return formatError("syscall.PtraceSetOptions (before loop)", err)
 	}
 
-	err = syscall.PtraceCont(currentPid, 0)
+	err = syscall.PtraceSyscall(currentPid, 0)
 	if err != nil {
 		return formatError("syscall.PtraceCont (before loop)", err)
 	}
@@ -170,9 +286,22 @@ func trace(process *os.Process, cfg *Config) (int, error) {
 			return -1, err
 		}
 
-		waitPid, err := syscall.Wait4(-1, &ws, syscall.WALL, nil)
+		var usage syscall.Rusage
+		waitPid, err := syscall.Wait4(-1, &ws, syscall.WALL, &usage)
 		if err != nil {
 			return formatError("syscall.Wait4", err)
+		}
+
+		memLim := cfg.MemoryLimit
+		if memLim >= 0 {
+			size := usage.Maxrss
+
+			percent := int(float64(size) / float64(memLim) * 100.0)
+			debugMessage("Memory consumption: %d%% (%d/%d)\n", percent, size, memLim)
+
+			if size >= memLim {
+				return -1, ErrMemoryLimitExceeded
+			}
 		}
 
 		if waitPid <= 0 {
@@ -261,7 +390,7 @@ func trace(process *os.Process, cfg *Config) (int, error) {
 		// 	return formatError("syscall.PtraceSetOptions", err)
 		// }
 
-		err = syscall.PtraceCont(currentPid, 0)
+		err = syscall.PtraceSyscall(currentPid, 0)
 		if err != nil {
 			return formatError("syscall.PtraceCont", err)
 		}
