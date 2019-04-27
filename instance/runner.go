@@ -4,46 +4,55 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/solovev/orange-app-runner/system"
 	"golang.org/x/sys/unix"
 )
 
-func Run(processPath string, processArgs []string, cfg *Config) (int, error) {
-	processName := filepath.Base(processPath)
+func wait(pid int) (cpid int, status syscall.WaitStatus, err error) {
+	cpid, err = syscall.Wait4(pid, &status, syscall.WALL, nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	return cpid, status, nil
+}
 
+func Run(processPath string, processArgs []string, cfg *Config) (int, error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	processName := filepath.Base(processPath)
 	log.Infof("Starting tracee (%s %v)...\n", processName, processArgs)
 
-	cmd := exec.Command(processPath, processArgs...)
-
-	cmd.Env = append([]string{
-		"PS1=" + fmt.Sprintf("[OAR eJudge] \"%s\" $ ", processName),
-	}, cfg.Env...)
-	cmd.Dir = cfg.WorkingDir
-
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	processArgs = append([]string{processName}, processArgs...)
 
 	ptrace := !cfg.AllowCreateProcesses || !cfg.AllowMultiThreading
 	log.Debugf("Ptrace - %t [Allow create processes - %t] [Allow multithreading - %t]", ptrace, cfg.AllowCreateProcesses, cfg.AllowMultiThreading)
 
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Ptrace:    ptrace,
-		Pdeathsig: syscall.SIGKILL,
-	}
-
-	if err := cmd.Start(); err != nil {
+	process, err := os.StartProcess(processPath, processArgs, &os.ProcAttr{
+		Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
+		Dir:   cfg.WorkingDir,
+		Env: append([]string{
+			"PS1=" + fmt.Sprintf("[OAR eJudge] \"%s\" $ ", processName),
+		}, cfg.Env...),
+		Sys: &syscall.SysProcAttr{
+			Ptrace:    true,
+			Pdeathsig: syscall.SIGKILL,
+		},
+	})
+	if err != nil {
 		return -1, err
 	}
-	defer cmd.Process.Kill()
 
-	pid := cmd.Process.Pid
+	// defer cmd.Process.Kill()
+
+	pid := process.Pid
 	if len(cfg.Affinity) > 0 {
 		set, err := system.SetAffinity(cfg.Affinity, pid)
 		if err != nil {
@@ -52,35 +61,44 @@ func Run(processPath string, processArgs []string, cfg *Config) (int, error) {
 		log.Debugf("Processor affinity was set to: %v\n", set)
 	}
 
-	if err := cmd.Wait(); err != nil {
-		status := cmd.ProcessState.Sys().(syscall.WaitStatus)
-		switch {
-		case status.Exited():
-			return status.ExitStatus(), nil
-		case status.Stopped():
-			signal := status.StopSignal()
-			if !ptrace {
-				return -1, fmt.Errorf("Wait status of tracee is \"Stopped\" (%s), but ptrace is disabled", signal.String())
-			}
-			if signal != syscall.SIGTRAP {
-				return -1, err
-			}
-			log.Debugf("[PID %d] Status is \"Stopped\" (SIGTRAP: %s)", pid, signal.String())
-		default:
-			return -1, err
-		}
+	_, status, err := wait(pid)
+	if err != nil {
+		return -1, err
 	}
 
-	return trace(cmd, cfg)
+	go func() {
+		time.Sleep(1 * time.Second)
+		// process.Release()
+		// time.Sleep(1 * time.Second)
+		process.Kill()
+	}()
+
+	switch {
+	case status.Exited():
+		return status.ExitStatus(), nil
+	case status.Stopped():
+		signal := status.StopSignal()
+		if !ptrace {
+			return -1, fmt.Errorf("Wait status of tracee is \"Stopped\" (%s), but ptrace is disabled", signal.String())
+		}
+		if signal != syscall.SIGTRAP {
+			return -1, err
+		}
+		log.Debugf("[PID %d] Status is \"Stopped\" (SIGTRAP: %s)", pid, signal.String())
+	default:
+		return -1, err
+	}
+
+	return trace(process, cfg)
 }
 
-func trace(cmd *exec.Cmd, cfg *Config) (int, error) {
+func trace(process *os.Process, cfg *Config) (int, error) {
 	var ws syscall.WaitStatus
 
 	level := 0
 	iterations := 0
 
-	traceePid := cmd.Process.Pid
+	traceePid := process.Pid
 	previousPid := 0
 	currentPid := traceePid
 
@@ -93,8 +111,8 @@ func trace(cmd *exec.Cmd, cfg *Config) (int, error) {
 	options |= syscall.PTRACE_O_TRACEEXIT
 
 	formatError := func(culprit string, err error) (int, error) {
-		currentCommand := processCommandName(currentPid, cmd)
-		previousCommand := processCommandName(previousPid, cmd)
+		currentCommand := processCommandName(currentPid, traceePid)
+		previousCommand := processCommandName(previousPid, traceePid)
 
 		return -1, fmt.Errorf("%d | Error at level %d [%s] for [PID: %d (%s), Prev. PID: %d (%s)]: %v", iterations, level, culprit, currentPid, currentCommand, previousPid, previousCommand, err)
 	}
@@ -104,7 +122,7 @@ func trace(cmd *exec.Cmd, cfg *Config) (int, error) {
 			return
 		}
 
-		name := processCommandName(pid, nil)
+		name := processCommandName(pid, traceePid)
 
 		prefix := "[%d | Process \"%s\" (%d) at level %d] "
 		switch {
@@ -250,12 +268,12 @@ func trace(cmd *exec.Cmd, cfg *Config) (int, error) {
 	}
 }
 
-func processCommandName(pid int, traceeCommand *exec.Cmd) string {
+func processCommandName(pid, traceePid int) string {
 	var result string
-	if traceeCommand != nil && pid == traceeCommand.Process.Pid {
-		result = fmt.Sprintf("TRACEE - %s", traceeCommand.Path)
-	} else {
-		result = system.GetProcessCommand(pid)
+
+	result = system.GetProcessCommand(pid)
+	if pid == traceePid {
+		result = fmt.Sprintf("Tracee | %s", result)
 	}
 	return strings.TrimSpace(result)
 }
