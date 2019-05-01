@@ -19,6 +19,7 @@ import (
 var (
 	ErrRealTimeLimitExceeded = defineTracerError(2, errors.New("Real time limit was exceeded"))
 	ErrMemoryLimitExceeded   = defineTracerError(3, errors.New("Memory (RSS) limit was exceeded"))
+	ErrCPUTimeLimitExceeded  = defineTracerError(4, errors.New("CPU time limit was exceeded"))
 )
 
 type traceeInstance struct {
@@ -156,33 +157,48 @@ func Run(processPath string, processArgs []string, cfg *Config) (int, error) {
 	default:
 	}
 
+	if tErr == nil {
+		if !cfg.PropagateExitCode {
+			exitCode = 0
+		}
+	} else {
+		tErr, ok := tErr.(*TracerError)
+		if ok {
+			exitCode = tErr.Code
+		}
+	}
+
+	if exitCode < 0 {
+		exitCode = 1
+	}
+
 	return exitCode, tErr
 }
 
-func startCheckingCPUTime(tracee *traceeInstance, cfg *Config) {
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
+// func startCheckingCPUTime(tracee *traceeInstance, cfg *Config) {
+// 	runtime.LockOSThread()
+// 	defer runtime.UnlockOSThread()
 
-	log.Debugln("Goroutine \"startCheckingCPUTime\" started")
-	defer log.Debugln("Goroutine \"startCheckingCPUTime\" terminated")
+// 	log.Debugln("Goroutine \"startCheckingCPUTime\" started")
+// 	defer log.Debugln("Goroutine \"startCheckingCPUTime\" terminated")
 
-	ticker := time.NewTicker(500 * time.Millisecond)
-	for {
-		select {
-		case <-tracee.stopc:
-			return
-		case <-ticker.C:
-			var usage syscall.Rusage
-			if err := syscall.Getrusage(syscall.RUSAGE_CHILDREN, &usage); err != nil {
-				tErr := createTracerError("syscall.Getrusage", err)
-				tracee.kill(tErr)
-				return
-			}
-			log.Debugf("> Rusage: [Utime: %d] [Stime: %d] [Maxrss: %d]\n", usage.Utime, usage.Stime, usage.Maxrss)
-			// usage.
-		}
-	}
-}
+// 	ticker := time.NewTicker(500 * time.Millisecond)
+// 	for {
+// 		select {
+// 		case <-tracee.stopc:
+// 			return
+// 		case <-ticker.C:
+// 			var usage syscall.Rusage
+// 			if err := syscall.Getrusage(syscall.RUSAGE_CHILDREN, &usage); err != nil {
+// 				tErr := createTracerError("syscall.Getrusage", err)
+// 				tracee.kill(tErr)
+// 				return
+// 			}
+// 			log.Debugf("> Rusage: [Utime: %d] [Stime: %d] [Maxrss: %d]\n", usage.Utime, usage.Stime, usage.Maxrss)
+// 			// usage.
+// 		}
+// 	}
+// }
 
 func startKillingTimer(tracee *traceeInstance, cfg *Config) {
 	if cfg.RealTimeLimit < 0 {
@@ -275,6 +291,8 @@ func trace(tracee *traceeInstance, cfg *Config) (int, error) {
 		return formatError("syscall.PtraceCont (before loop)", err)
 	}
 
+	prevCPUPerc := 0
+
 	maxIterations := cfg.MaxPtraceIterations
 	log.Debugf("Starting ptrace loop (Max iterations: %d)...\n", maxIterations)
 	for {
@@ -297,7 +315,7 @@ func trace(tracee *traceeInstance, cfg *Config) (int, error) {
 			size := usage.Maxrss
 
 			percent := int(float64(size) / float64(memLim) * 100.0)
-			debugMessage("Memory consumption: %d%% (%d/%d)\n", percent, size, memLim)
+			debugMessage("Memory consumption of limit: %d%% (%d/%d)\n", percent, size, memLim)
 
 			if size >= memLim {
 				return -1, ErrMemoryLimitExceeded
@@ -306,8 +324,25 @@ func trace(tracee *traceeInstance, cfg *Config) (int, error) {
 
 		cpuLim := cfg.CPUTimeLimit
 		if cpuLim >= 0 {
-			// percent := int(float64(size) / float64(memLim) * 100.0)
-			debugMessage("CPU time consumption: U %v S %v\n", usage.Utime, usage.Stime)
+			utime := usage.Utime
+			ums := (float64(utime.Usec) / 1000.0) + float64(utime.Sec)*1000.0
+
+			stime := usage.Stime
+			sms := (float64(stime.Usec) / 1000.0) + float64(stime.Sec)*1000.0
+
+			total := sms + ums
+			percent := int(total / cpuLim * 100.0)
+
+			debugMessage("CPU time consumption of limit: %d%% [User: %v (%vms)] [System: %v (%vms)]\n", percent, utime, ums, stime, sms)
+
+			if percent-prevCPUPerc >= 15 {
+				log.Infof("CPU time consumption of limit: %d%% (%vms / %vms)\n", percent, total, cpuLim)
+				prevCPUPerc = percent
+			}
+
+			if total >= cpuLim {
+				return -1, ErrCPUTimeLimitExceeded
+			}
 		}
 
 		if waitPid <= 0 {

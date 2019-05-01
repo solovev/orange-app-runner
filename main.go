@@ -100,14 +100,12 @@ func startTracer() {
 
 	exitCode, err := instance.Run(processPath, processArgs, &cfg)
 	if err != nil {
-		log.Fatalf("Error running tracee process: %v\n", err)
+		log.Warnf("Error running tracee process: %v\n", err)
 	}
 
-	log.Infof("Tracee is terminated. Exit code: %d\n", exitCode)
+	log.Infof("Tracer is terminated. Exit code: %d\n", exitCode)
 
-	if cfg.PropagateExitCode {
-		os.Exit(exitCode)
-	}
+	os.Exit(exitCode)
 }
 
 func main() {
@@ -203,8 +201,12 @@ func main() {
 	}
 
 	if err := cmd.Wait(); err != nil {
-		log.WithFields(log.Fields{
-			"error": err,
-		}).Fatal("Error waiting for the reexec.Command")
+		if exitError, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitError.ExitCode())
+		} else {
+			log.WithFields(log.Fields{
+				"error": err,
+			}).Fatal("Error waiting for the reexec.Command")
+		}
 	}
 }
