@@ -64,11 +64,11 @@ func Run(processPath string, processArgs []string, cfg *Config) (int, error) {
 	ptrace := !cfg.AllowCreateProcesses || !cfg.AllowMultiThreading
 	log.Debugf("Ptrace - %t [Allow create processes - %t] [Allow multithreading - %t]", ptrace, cfg.AllowCreateProcesses, cfg.AllowMultiThreading)
 
-	inReader, inWriter, err := os.Pipe()
-	if err != nil {
-		return -1, err
-	}
-	defer inWriter.Close()
+	// inReader, inWriter, err := os.Pipe()
+	// if err != nil {
+	// 	return -1, err
+	// }
+	// defer inWriter.Close()
 
 	outReader, outWriter, err := os.Pipe()
 	if err != nil {
@@ -82,11 +82,11 @@ func Run(processPath string, processArgs []string, cfg *Config) (int, error) {
 	}
 	defer errWriter.Close()
 
-	go io.Copy(inWriter, os.Stdin)
+	// go io.Copy(inWriter, os.Stdin)
 	go io.Copy(os.Stdout, outReader)
 	go io.Copy(os.Stderr, errReader)
 
-	files := []*os.File{inReader, outWriter, errWriter}
+	files := []*os.File{os.Stdin, outWriter, errWriter}
 
 	process, err := os.StartProcess(processPath, processArgs, &os.ProcAttr{
 		Files: files,
