@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -154,11 +155,54 @@ func GetProcessStats(pid int) (uint64, uint64, error) {
 	if err != nil {
 		return 0, 0, fmt.Errorf("Unable to parse \"stime\" from \"%s\" file: %v", path, err)
 	}
+	cutime, err := strconv.ParseUint(stats[15], 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("Unable to parse \"cutime\" from \"%s\" file: %v", path, err)
+	}
+	cstime, err := strconv.ParseUint(stats[16], 10, 64)
+	if err != nil {
+		return 0, 0, fmt.Errorf("Unable to parse \"cstime\" from \"%s\" file: %v", path, err)
+	}
+
 	vsize, err := strconv.ParseUint(stats[22], 10, 64)
 	if err != nil {
 		return 0, 0, fmt.Errorf("Unable to parse \"vtime\" from \"%s\" file: %v", path, err)
 	}
-	return stime + utime, vsize, nil
+	return stime + utime + cutime + cstime, vsize, nil
+}
+
+func readLine(r io.Reader, lineNum int) (line string, lastLine int, err error) {
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		lastLine++
+		if lastLine == lineNum {
+			return sc.Text(), lastLine, sc.Err()
+		}
+	}
+	return line, lastLine, io.EOF
+}
+
+func GetProcessMemoryPeak(pid int) (int64, error) {
+	path := fmt.Sprintf("/proc/%d/status", pid)
+
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	line, _, err := readLine(f, 17)
+	if err != nil {
+		return 0, err
+	}
+
+	fields := strings.Fields(line)
+	value, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil {
+		return 0, err
+	}
+
+	return value, nil
 }
 
 // GetProcessCommand возвращает комманду запуска указанного процесса.

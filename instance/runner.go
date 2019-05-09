@@ -3,11 +3,11 @@ package instance
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -25,6 +25,8 @@ var (
 type traceeInstance struct {
 	process *os.Process
 	pgid    int
+
+	wg *sync.WaitGroup
 
 	stopc chan bool
 	errc  chan error
@@ -53,8 +55,9 @@ func Run(processPath string, processArgs []string, cfg *Config) (int, error) {
 	tracee := &traceeInstance{
 		stopc: make(chan bool),
 		errc:  make(chan error, 1),
+		wg:    &sync.WaitGroup{},
 	}
-	defer close(tracee.stopc)
+	// defer close(tracee.stopc)
 
 	processName := filepath.Base(processPath)
 	log.Infof("Starting tracee (%s %v)...\n", processName, processArgs)
@@ -70,23 +73,23 @@ func Run(processPath string, processArgs []string, cfg *Config) (int, error) {
 	// }
 	// defer inWriter.Close()
 
-	outReader, outWriter, err := os.Pipe()
-	if err != nil {
-		return -1, err
-	}
-	defer outWriter.Close()
+	// outReader, outWriter, err := os.Pipe()
+	// if err != nil {
+	// 	return -1, err
+	// }
+	// defer outReader.Close()
 
-	errReader, errWriter, err := os.Pipe()
-	if err != nil {
-		return -1, err
-	}
-	defer errWriter.Close()
+	// errReader, errWriter, err := os.Pipe()
+	// if err != nil {
+	// 	return -1, err
+	// }
+	// defer errReader.Close()
 
 	// go io.Copy(inWriter, os.Stdin)
-	go io.Copy(os.Stdout, outReader)
-	go io.Copy(os.Stderr, errReader)
+	// go io.Copy(os.Stdout, outReader)
+	// go io.Copy(os.Stderr, errReader)
 
-	files := []*os.File{os.Stdin, outWriter, errWriter}
+	files := []*os.File{os.Stdin, os.Stdout, os.Stderr}
 
 	process, err := os.StartProcess(processPath, processArgs, &os.ProcAttr{
 		Files: files,
@@ -104,11 +107,11 @@ func Run(processPath string, processArgs []string, cfg *Config) (int, error) {
 
 	tracee.process = process
 
-	for _, fd := range files {
-		if err = fd.Close(); err != nil {
-			return -1, err
-		}
-	}
+	// for _, fd := range files {
+	// 	if err = fd.Close(); err != nil {
+	// 		return -1, err
+	// 	}
+	// }
 
 	pid := process.Pid
 	pgid, err := syscall.Getpgid(pid)
@@ -126,7 +129,9 @@ func Run(processPath string, processArgs []string, cfg *Config) (int, error) {
 		go startKillingTimer(tracee, cfg)
 	}
 
-	// go startCheckingCPUTime(tracee, cfg)
+	if cfg.CPUTimeLimit > 0 || cfg.MemoryLimit > 0 {
+		go startCheckingLimits(tracee, cfg)
+	}
 
 	_, status, err := wait(pid)
 	if err != nil {
@@ -172,38 +177,69 @@ func Run(processPath string, processArgs []string, cfg *Config) (int, error) {
 		exitCode = 1
 	}
 
+	close(tracee.stopc)
+	tracee.wg.Wait()
+
 	return exitCode, tErr
 }
 
-// func startCheckingCPUTime(tracee *traceeInstance, cfg *Config) {
-// 	runtime.LockOSThread()
-// 	defer runtime.UnlockOSThread()
+func startCheckingLimits(tracee *traceeInstance, cfg *Config) {
+	tracee.wg.Add(1)
+	defer tracee.wg.Done()
 
-// 	log.Debugln("Goroutine \"startCheckingCPUTime\" started")
-// 	defer log.Debugln("Goroutine \"startCheckingCPUTime\" terminated")
+	log.Debugln("Goroutine \"startCheckingLimits\" started")
+	defer log.Debugln("Goroutine \"startCheckingLimits\" terminated")
 
-// 	ticker := time.NewTicker(500 * time.Millisecond)
-// 	for {
-// 		select {
-// 		case <-tracee.stopc:
-// 			return
-// 		case <-ticker.C:
-// 			var usage syscall.Rusage
-// 			if err := syscall.Getrusage(syscall.RUSAGE_CHILDREN, &usage); err != nil {
-// 				tErr := createTracerError("syscall.Getrusage", err)
-// 				tracee.kill(tErr)
-// 				return
-// 			}
-// 			log.Debugf("> Rusage: [Utime: %d] [Stime: %d] [Maxrss: %d]\n", usage.Utime, usage.Stime, usage.Maxrss)
-// 			// usage.
-// 		}
-// 	}
-// }
+	ticker := time.NewTicker(500 * time.Millisecond)
+	for {
+		select {
+		case <-tracee.stopc:
+			return
+		case <-ticker.C:
+			time, _, err := system.GetProcessStats(tracee.process.Pid)
+			if err != nil {
+				tErr := createTracerError("startCheckingLimits [system.GetProcessStats]", err)
+				tracee.kill(tErr)
+				return
+			}
+
+			cpuLim := cfg.CPUTimeLimit
+			if cpuLim >= 0 {
+				_, err = checkCPUTimeLimit(float64(time), cpuLim, -1)
+				if err != nil {
+					tErr := createTracerError("startCheckingLimits", err)
+					tracee.kill(tErr)
+					return
+				}
+			}
+
+			memory, err := system.GetProcessMemoryPeak(tracee.process.Pid)
+			if err != nil {
+				tErr := createTracerError("startCheckingLimits [system.GetProcessMemoryPeak]", err)
+				tracee.kill(tErr)
+				return
+			}
+
+			memLim := cfg.MemoryLimit
+			if memLim >= 0 {
+				err = checkMemoryLimit(int64(memory), memLim)
+				if err != nil {
+					tErr := createTracerError("startCheckingLimits", err)
+					tracee.kill(tErr)
+					return
+				}
+			}
+		}
+	}
+}
 
 func startKillingTimer(tracee *traceeInstance, cfg *Config) {
 	if cfg.RealTimeLimit < 0 {
 		return
 	}
+
+	tracee.wg.Add(1)
+	defer tracee.wg.Done()
 
 	log.Debugln("Goroutine \"startKillingTimer\" started")
 	defer log.Debugln("Goroutine \"startKillingTimer\" terminated")
@@ -220,6 +256,32 @@ func startKillingTimer(tracee *traceeInstance, cfg *Config) {
 			return
 		}
 	}
+}
+
+func checkMemoryLimit(value, limit int64) error {
+	percent := int(float64(value) / float64(limit) * 100.0)
+	log.Debugf("Memory consumption of limit: %d%% (%d/%d)\n", percent, value, limit)
+
+	if value >= limit {
+		return ErrMemoryLimitExceeded
+	}
+	return nil
+}
+
+func checkCPUTimeLimit(value, limit float64, prevCPUPerc int) (int, error) {
+	percent := int(value / limit * 100.0)
+
+	log.Debugf("CPU time consumption of limit: %d%% (%v/%v)\n", percent, value, limit)
+
+	if prevCPUPerc > 0 && percent-prevCPUPerc >= 15 {
+		log.Infof("CPU time consumption of limit: %d%% (%vms / %vms)\n", percent, value, limit)
+		prevCPUPerc = percent
+	}
+
+	if value >= limit {
+		return 0, ErrCPUTimeLimitExceeded
+	}
+	return prevCPUPerc, nil
 }
 
 func trace(tracee *traceeInstance, cfg *Config) (int, error) {
@@ -312,13 +374,9 @@ func trace(tracee *traceeInstance, cfg *Config) (int, error) {
 
 		memLim := cfg.MemoryLimit
 		if memLim >= 0 {
-			size := usage.Maxrss
-
-			percent := int(float64(size) / float64(memLim) * 100.0)
-			debugMessage("Memory consumption of limit: %d%% (%d/%d)\n", percent, size, memLim)
-
-			if size >= memLim {
-				return -1, ErrMemoryLimitExceeded
+			err = checkMemoryLimit(usage.Maxrss, memLim)
+			if err != nil {
+				return -1, err
 			}
 		}
 
@@ -331,17 +389,10 @@ func trace(tracee *traceeInstance, cfg *Config) (int, error) {
 			sms := (float64(stime.Usec) / 1000.0) + float64(stime.Sec)*1000.0
 
 			total := sms + ums
-			percent := int(total / cpuLim * 100.0)
 
-			debugMessage("CPU time consumption of limit: %d%% [User: %v (%vms)] [System: %v (%vms)]\n", percent, utime, ums, stime, sms)
-
-			if percent-prevCPUPerc >= 15 {
-				log.Infof("CPU time consumption of limit: %d%% (%vms / %vms)\n", percent, total, cpuLim)
-				prevCPUPerc = percent
-			}
-
-			if total >= cpuLim {
-				return -1, ErrCPUTimeLimitExceeded
+			prevCPUPerc, err = checkCPUTimeLimit(total, cpuLim, prevCPUPerc)
+			if err != nil {
+				return -1, err
 			}
 		}
 
